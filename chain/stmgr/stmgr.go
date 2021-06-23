@@ -157,6 +157,11 @@ func NewStateManagerWithUpgradeSchedule(cs *store.ChainStore, us UpgradeSchedule
 		lastVersion = build.NewestNetworkVersion
 	}
 
+	for _, spec := range networkVersions {
+		fmt.Println("spec spec", spec.atOrBelow, spec.networkVersion)
+	}
+	fmt.Println("latest network", lastVersion, len(networkVersions))
+
 	return &StateManager{
 		networkVersions:   networkVersions,
 		latestVersion:     lastVersion,
@@ -289,6 +294,7 @@ func (sm *StateManager) ExecutionTrace(ctx context.Context, ts *types.TipSet) (c
 }
 
 func (sm *StateManager) ApplyBlocks(ctx context.Context, parentEpoch abi.ChainEpoch, pstate cid.Cid, bms []store.BlockMessages, epoch abi.ChainEpoch, r vm.Rand, em ExecMonitor, baseFee abi.TokenAmount, ts *types.TipSet) (cid.Cid, cid.Cid, error) {
+	fmt.Println("apply blocks", parentEpoch.String(), pstate, len(bms), epoch.String(), len(ts.Cids()))
 	done := metrics.Timer(ctx, metrics.VMApplyBlocksTotal)
 	defer done()
 
@@ -357,6 +363,7 @@ func (sm *StateManager) ApplyBlocks(ctx context.Context, parentEpoch abi.ChainEp
 			if err != nil {
 				return cid.Undef, cid.Undef, xerrors.Errorf("flushing vm: %w", err)
 			}
+			fmt.Println("run ", i, pstate)
 		}
 
 		// handle state forks
@@ -389,8 +396,10 @@ func (sm *StateManager) ApplyBlocks(ctx context.Context, parentEpoch abi.ChainEp
 		for _, cm := range append(b.BlsMessages, b.SecpkMessages...) {
 			m := cm.VMMessage()
 			if _, found := processedMsgs[m.Cid()]; found {
+				fmt.Println("processed", m.Cid())
 				continue
 			}
+			fmt.Println("apply message", m.Cid())
 			r, err := vmi.ApplyMessage(ctx, cm)
 			if err != nil {
 				return cid.Undef, cid.Undef, err
@@ -408,12 +417,20 @@ func (sm *StateManager) ApplyBlocks(ctx context.Context, parentEpoch abi.ChainEp
 			processedMsgs[m.Cid()] = struct{}{}
 		}
 
+
+		st, err := vmi.Flush(ctx)
+		if err != nil {
+			return cid.Undef, cid.Undef, xerrors.Errorf("vm flush failed: %w", err)
+		}
+		fmt.Println("apply message state root", st)
+
 		params, err := actors.SerializeParams(&reward.AwardBlockRewardParams{
 			Miner:     b.Miner,
 			Penalty:   penalty,
 			GasReward: gasReward,
 			WinCount:  b.WinCount,
 		})
+		fmt.Println("params", b.Miner, penalty, gasReward, b.WinCount,);
 		if err != nil {
 			return cid.Undef, cid.Undef, xerrors.Errorf("failed to serialize award params: %w", err)
 		}
@@ -438,12 +455,16 @@ func (sm *StateManager) ApplyBlocks(ctx context.Context, parentEpoch abi.ChainEp
 				return cid.Undef, cid.Undef, xerrors.Errorf("callback failed on reward message: %w", err)
 			}
 		}
+		st, err = vmi.Flush(ctx)
+		if err != nil {
+			return cid.Undef, cid.Undef, xerrors.Errorf("vm flush failed: %w", err)
+		}
+		fmt.Println("apply implicit message state root", st)
 
 		if ret.ExitCode != 0 {
 			return cid.Undef, cid.Undef, xerrors.Errorf("reward application message failed (exit %d): %s", ret.ExitCode, ret.ActorErr)
 		}
 	}
-
 	partDone()
 	partDone = metrics.Timer(ctx, metrics.VMApplyCron)
 
@@ -469,6 +490,7 @@ func (sm *StateManager) ApplyBlocks(ctx context.Context, parentEpoch abi.ChainEp
 	if err != nil {
 		return cid.Undef, cid.Undef, xerrors.Errorf("vm flush failed: %w", err)
 	}
+	fmt.Println("final state root", st)
 
 	stats.Record(ctx, metrics.VMSends.M(int64(atomic.LoadUint64(&vm.StatSends))),
 		metrics.VMApplied.M(int64(atomic.LoadUint64(&vm.StatApplied))))

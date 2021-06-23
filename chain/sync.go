@@ -532,6 +532,7 @@ func (syncer *Syncer) tryLoadFullTipSet(tsk types.TipSetKey) (*store.FullTipSet,
 // Most of the heavy-lifting logic happens in syncer#collectChain. Refer to the
 // godocs on that method for a more detailed view.
 func (syncer *Syncer) Sync(ctx context.Context, maybeHead *types.TipSet) error {
+	fmt.Println("try syncing head", maybeHead.Height())
 	ctx, span := trace.StartSpan(ctx, "chain.Sync")
 	defer span.End()
 

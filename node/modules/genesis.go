@@ -2,6 +2,7 @@ package modules
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 
 	"github.com/ipfs/go-datastore"
@@ -22,6 +23,7 @@ func ErrorGenesis() Genesis {
 func LoadGenesis(genBytes []byte) func(dtypes.ChainBlockstore) Genesis {
 	return func(bs dtypes.ChainBlockstore) Genesis {
 		return func() (header *types.BlockHeader, e error) {
+			fmt.Println("try loading car")
 			c, err := car.LoadCar(bs, bytes.NewReader(genBytes))
 			if err != nil {
 				return nil, xerrors.Errorf("loading genesis car file failed: %w", err)

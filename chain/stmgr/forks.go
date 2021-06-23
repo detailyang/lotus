@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"runtime"
 	"sort"
 	"sync"
@@ -296,6 +297,7 @@ func (sm *StateManager) handleStateForks(ctx context.Context, root cid.Cid, heig
 	retCid := root
 	var err error
 	u := sm.stateMigrations[height]
+	fmt.Println("state migrations", u);
 	if u != nil && u.upgrade != nil {
 		startTime := time.Now()
 		log.Warnw("STARTING migration", "height", height, "from", root)

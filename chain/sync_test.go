@@ -1,3 +1,5 @@
+// +build interopnet
+
 package chain_test
 
 import (

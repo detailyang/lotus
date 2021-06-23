@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	builtin5 "github.com/filecoin-project/specs-actors/v5/actors/builtin"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -255,6 +256,8 @@ var DaemonCmd = &cli.Command{
 				return xerrors.Errorf("restoring from backup: %w", err)
 			}
 		}
+
+		fmt.Println("builtin5.CronActorAddr ", builtin5.CronActorAddr)
 
 		chainfile := cctx.String("import-chain")
 		snapshot := cctx.String("import-snapshot")

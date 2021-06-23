@@ -73,7 +73,7 @@ var genesisVerifyCmd = &cli.Command{
 			return err
 		}
 
-		fmt.Println("Genesis: ", ts.Key())
+		fmt.Println("Genesis: ", ts.Key(), ts.Height(), ts.Cids())
 		expFIL := big.Mul(big.NewInt(int64(build.FilBase)), big.NewInt(int64(build.FilecoinPrecision)))
 		fmt.Printf("Total FIL: %s", types.FIL(total))
 		if !expFIL.Equals(total) {
@@ -97,6 +97,7 @@ var genesisVerifyCmd = &cli.Command{
 		store := adt.WrapStore(ctx, cst)
 
 		if err := stree.ForEach(func(addr address.Address, act *types.Actor) error {
+			fmt.Println("addr act", addr.String(), act.Head, act.Code, act.Balance)
 			switch {
 			case builtin.IsStorageMinerActor(act.Code):
 				_, err := miner.Load(store, act)
