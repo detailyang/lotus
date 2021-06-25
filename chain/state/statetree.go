@@ -410,6 +410,7 @@ func (st *StateTree) Flush(ctx context.Context) (cid.Cid, error) {
 	}
 
 	for addr, sto := range st.snaps.layers[0].actors {
+		fmt.Println("flush", addr.String(), sto.Delete, sto.Act.Code.String(), sto.Act.Balance);
 		if sto.Delete {
 			if err := st.root.Delete(abi.AddrKey(addr)); err != nil {
 				return cid.Undef, err

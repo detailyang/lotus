@@ -105,6 +105,7 @@ func TestSync(t *testing.T) {
 		if w >= 2 {
 			return;
 		}
+		break;
 	}
 }
 
