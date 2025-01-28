@@ -21,7 +21,7 @@ import (
 	"github.com/filecoin-project/go-state-types/network"
 	"github.com/filecoin-project/specs-actors/v8/actors/migration/nv16"
 
-	"github.com/filecoin-project/lotus/build"
+	"github.com/filecoin-project/lotus/build/buildconstants"
 	"github.com/filecoin-project/lotus/chain/actors/adt"
 	"github.com/filecoin-project/lotus/chain/actors/builtin"
 	init_ "github.com/filecoin-project/lotus/chain/actors/builtin/init"
@@ -171,7 +171,7 @@ func (us UpgradeSchedule) GetNtwkVersion(e abi.ChainEpoch) (network.Version, err
 		}
 	}
 
-	return build.GenesisNetworkVersion, nil
+	return buildconstants.GenesisNetworkVersion, nil
 }
 
 func (sm *StateManager) HandleStateForks(ctx context.Context, root cid.Cid, height abi.ChainEpoch, cb ExecMonitor, ts *types.TipSet) (cid.Cid, error) {
@@ -182,7 +182,15 @@ func (sm *StateManager) HandleStateForks(ctx context.Context, root cid.Cid, heig
 		if err == nil {
 			if ok {
 				log.Infow("CACHED migration", "height", height, "from", root, "to", migCid)
-				return migCid, nil
+				foundMigratedRoot, err := sm.ChainStore().StateBlockstore().Has(ctx, migCid)
+				if err != nil {
+					log.Errorw("failed to check whether previous migration result is present", "err", err)
+				} else if !foundMigratedRoot {
+					log.Errorw("cached migration result not found in blockstore, running migration again")
+					u.migrationResultCache.Delete(ctx, root)
+				} else {
+					return migCid, nil
+				}
 			}
 		} else if !errors.Is(err, datastore.ErrNotFound) {
 			log.Errorw("failed to lookup previous migration result", "err", err)
@@ -200,10 +208,6 @@ func (sm *StateManager) HandleStateForks(ctx context.Context, root cid.Cid, heig
 			log.Errorw("FAILED migration", "height", height, "from", root, "error", err)
 			return cid.Undef, err
 		}
-		// Yes, we update the cache, even for the final upgrade epoch. Why? Reverts. This
-		// can save us a _lot_ of time because very few actors will have changed if we
-		// do a small revert then need to re-run the migration.
-		u.cache.Update(tmpCache)
 		log.Warnw("COMPLETED migration",
 			"height", height,
 			"from", root,
@@ -220,10 +224,10 @@ func (sm *StateManager) HandleStateForks(ctx context.Context, root cid.Cid, heig
 	return retCid, nil
 }
 
-// Returns true executing tipsets between the specified heights would trigger an expensive
-// migration. NOTE: migrations occurring _at_ the target height are not included, as they're
-// executed _after_ the target height.
-func (sm *StateManager) hasExpensiveForkBetween(parent, height abi.ChainEpoch) bool {
+// HasExpensiveForkBetween returns true where executing tipsets between the specified heights would
+// trigger an expensive migration. NOTE: migrations occurring _at_ the target height are not
+// included, as they're executed _after_ the target height.
+func (sm *StateManager) HasExpensiveForkBetween(parent, height abi.ChainEpoch) bool {
 	for h := parent; h < height; h++ {
 		if _, ok := sm.expensiveUpgrades[h]; ok {
 			return true
@@ -383,7 +387,7 @@ func DoTransfer(tree types.StateTree, from, to address.Address, amt abi.TokenAmo
 
 func TerminateActor(ctx context.Context, tree *state.StateTree, addr address.Address, em ExecMonitor, epoch abi.ChainEpoch, ts *types.TipSet) error {
 	a, err := tree.GetActor(addr)
-	if xerrors.Is(err, types.ErrActorNotFound) {
+	if errors.Is(err, types.ErrActorNotFound) {
 		return types.ErrActorNotFound
 	} else if err != nil {
 		return xerrors.Errorf("failed to get actor to delete: %w", err)

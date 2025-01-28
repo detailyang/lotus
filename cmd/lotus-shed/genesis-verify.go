@@ -16,7 +16,7 @@ import (
 	"github.com/filecoin-project/go-state-types/big"
 
 	"github.com/filecoin-project/lotus/blockstore"
-	"github.com/filecoin-project/lotus/build"
+	"github.com/filecoin-project/lotus/build/buildconstants"
 	"github.com/filecoin-project/lotus/chain/actors/adt"
 	"github.com/filecoin-project/lotus/chain/actors/builtin"
 	"github.com/filecoin-project/lotus/chain/actors/builtin/account"
@@ -62,7 +62,7 @@ var genesisVerifyCmd = &cli.Command{
 			return xerrors.Errorf("opening the car file: %w", err)
 		}
 
-		ts, err := cs.Import(cctx.Context, f)
+		ts, _, err := cs.Import(cctx.Context, f)
 		if err != nil {
 			return err
 		}
@@ -73,7 +73,7 @@ var genesisVerifyCmd = &cli.Command{
 		}
 
 		fmt.Println("Genesis: ", ts.Key())
-		expFIL := big.Mul(big.NewInt(int64(build.FilBase)), big.NewInt(int64(build.FilecoinPrecision)))
+		expFIL := big.Mul(big.NewInt(int64(buildconstants.FilBase)), big.NewInt(int64(buildconstants.FilecoinPrecision)))
 		fmt.Printf("Total FIL: %s", types.FIL(total))
 		if !expFIL.Equals(total) {
 			color.Red("  INCORRECT!")

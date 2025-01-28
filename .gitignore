@@ -6,6 +6,7 @@
 /lotus-chainwatch
 /lotus-shed
 /lotus-sim
+/sptool
 /lotus-townhall
 /lotus-fountain
 /lotus-stats
@@ -35,19 +36,29 @@ build/paramfetch.sh
 /darwin
 /linux
 *.snap
+devgen.car
+localnet.json
+/*.ndjson
 
 *-fuzz.zip
 /chain/types/work_msg/
 bin/ipget
 bin/tmp/*
 .idea
+.vscode
 scratchpad
 
 build/builtin-actors/v*
 build/builtin-actors/*.car
 
 dist/
+darwin_amd64_v1/
+darwin_arm64/
+darwin_all/
+linux_amd64_v1/
 
+xx*
+release_body.md
 
 # The following files are checked into git and result
 # in dirty git state if removed from the docker context

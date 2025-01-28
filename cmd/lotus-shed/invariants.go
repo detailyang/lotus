@@ -3,7 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
+	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -16,21 +17,27 @@ import (
 	"github.com/filecoin-project/go-state-types/builtin"
 	v10 "github.com/filecoin-project/go-state-types/builtin/v10"
 	v11 "github.com/filecoin-project/go-state-types/builtin/v11"
+	v12 "github.com/filecoin-project/go-state-types/builtin/v12"
+	v13 "github.com/filecoin-project/go-state-types/builtin/v13"
+	v14 "github.com/filecoin-project/go-state-types/builtin/v14"
+	v15 "github.com/filecoin-project/go-state-types/builtin/v15"
+	v16 "github.com/filecoin-project/go-state-types/builtin/v16"
 	v8 "github.com/filecoin-project/go-state-types/builtin/v8"
 	v9 "github.com/filecoin-project/go-state-types/builtin/v9"
 
 	"github.com/filecoin-project/lotus/blockstore"
+	badgerbs "github.com/filecoin-project/lotus/blockstore/badger"
+	"github.com/filecoin-project/lotus/blockstore/splitstore"
 	"github.com/filecoin-project/lotus/chain/actors"
 	"github.com/filecoin-project/lotus/chain/consensus"
 	"github.com/filecoin-project/lotus/chain/consensus/filcns"
-	"github.com/filecoin-project/lotus/chain/index"
+	proofsffi "github.com/filecoin-project/lotus/chain/proofs/ffi"
 	"github.com/filecoin-project/lotus/chain/stmgr"
 	"github.com/filecoin-project/lotus/chain/store"
 	"github.com/filecoin-project/lotus/chain/types"
 	"github.com/filecoin-project/lotus/chain/vm"
 	lcli "github.com/filecoin-project/lotus/cli"
 	"github.com/filecoin-project/lotus/node/repo"
-	"github.com/filecoin-project/lotus/storage/sealer/ffiwrapper"
 )
 
 var invariantsCmd = &cli.Command{
@@ -72,28 +79,56 @@ var invariantsCmd = &cli.Command{
 
 		defer lkrepo.Close() //nolint:errcheck
 
-		bs, err := lkrepo.Blockstore(ctx, repo.UniversalBlockstore)
+		cold, err := lkrepo.Blockstore(ctx, repo.UniversalBlockstore)
 		if err != nil {
-			return fmt.Errorf("failed to open blockstore: %w", err)
+			return fmt.Errorf("failed to open universal blockstore %w", err)
 		}
 
-		defer func() {
-			if c, ok := bs.(io.Closer); ok {
-				if err := c.Close(); err != nil {
-					log.Warnf("failed to close blockstore: %s", err)
-				}
-			}
-		}()
+		path, err := lkrepo.SplitstorePath()
+		if err != nil {
+			return err
+		}
+
+		path = filepath.Join(path, "hot.badger")
+		if err := os.MkdirAll(path, 0755); err != nil {
+			return err
+		}
+
+		opts, err := repo.BadgerBlockstoreOptions(repo.HotBlockstore, path, lkrepo.Readonly())
+		if err != nil {
+			return err
+		}
+
+		hot, err := badgerbs.Open(opts)
+		if err != nil {
+			return err
+		}
 
 		mds, err := lkrepo.Datastore(context.Background(), "/metadata")
 		if err != nil {
 			return err
 		}
 
+		cfg := &splitstore.Config{
+			MarkSetType:       "map",
+			DiscardColdBlocks: true,
+		}
+		ss, err := splitstore.Open(path, mds, hot, cold, cfg)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if err := ss.Close(); err != nil {
+				log.Warnf("failed to close blockstore: %s", err)
+
+			}
+		}()
+		bs := ss
+
 		cs := store.NewChainStore(bs, bs, mds, filcns.Weight, nil)
 		defer cs.Close() //nolint:errcheck
 
-		sm, err := stmgr.NewStateManager(cs, consensus.NewTipSetExecutor(filcns.RewardFunc), vm.Syscalls(ffiwrapper.ProofVerifier), filcns.DefaultUpgradeSchedule(), nil, mds, index.DummyMsgIndex)
+		sm, err := stmgr.NewStateManager(cs, consensus.NewTipSetExecutor(filcns.RewardFunc), vm.Syscalls(proofsffi.ProofVerifier), filcns.DefaultUpgradeSchedule(), nil, mds, nil)
 		if err != nil {
 			return err
 		}
@@ -149,6 +184,33 @@ var invariantsCmd = &cli.Command{
 			if err != nil {
 				return xerrors.Errorf("checking state invariants: %w", err)
 			}
+		case actorstypes.Version12:
+			messages, err = v12.CheckStateInvariants(actorTree, abi.ChainEpoch(epoch), actorCodeCids)
+			if err != nil {
+				return xerrors.Errorf("checking state invariants: %w", err)
+			}
+		case actorstypes.Version13:
+			messages, err = v13.CheckStateInvariants(actorTree, abi.ChainEpoch(epoch), actorCodeCids)
+			if err != nil {
+				return xerrors.Errorf("checking state invariants: %w", err)
+			}
+		case actorstypes.Version14:
+			messages, err = v14.CheckStateInvariants(actorTree, abi.ChainEpoch(epoch), actorCodeCids)
+			if err != nil {
+				return xerrors.Errorf("checking state invariants: %w", err)
+			}
+		case actorstypes.Version15:
+			messages, err = v15.CheckStateInvariants(actorTree, abi.ChainEpoch(epoch), actorCodeCids)
+			if err != nil {
+				return xerrors.Errorf("checking state invariants: %w", err)
+			}
+		case actorstypes.Version16:
+			messages, err = v16.CheckStateInvariants(actorTree, abi.ChainEpoch(epoch), actorCodeCids)
+			if err != nil {
+				return xerrors.Errorf("checking state invariants: %w", err)
+			}
+		default:
+			return xerrors.Errorf("unsupported actor version: %v", av)
 		}
 
 		fmt.Println("completed, took ", time.Since(startTime))

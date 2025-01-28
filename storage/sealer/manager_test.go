@@ -1,4 +1,3 @@
-// stm: #unit
 package sealer
 
 import (
@@ -100,10 +99,10 @@ func (t *testStorage) Stat(path string) (fsutil.FsStat, error) {
 
 var _ paths.LocalStorage = &testStorage{}
 
-func newTestMgr(ctx context.Context, t *testing.T, ds datastore.Datastore) (*Manager, *paths.Local, *paths.Remote, *paths.Index, func()) {
+func newTestMgr(ctx context.Context, t *testing.T, ds datastore.Datastore) (*Manager, *paths.Local, *paths.Remote, *paths.MemIndex, func()) {
 	st := newTestStorage(t)
 
-	si := paths.NewIndex(nil)
+	si := paths.NewMemIndex(nil)
 
 	lstor, err := paths.NewLocal(ctx, st, si, nil)
 	require.NoError(t, err)
@@ -530,7 +529,6 @@ func TestRedoPC1(t *testing.T) {
 
 // Manager restarts in the middle of a task, restarts it, it completes
 func TestRestartManager(t *testing.T) {
-	//stm: @WORKER_JOBS_001
 	test := func(returnBeforeCall bool) func(*testing.T) {
 		return func(t *testing.T) {
 			logging.SetAllLoggers(logging.LevelDebug)
@@ -648,7 +646,7 @@ func TestRestartWorker(t *testing.T) {
 	wds := syncds.MutexWrap(datastore.NewMapDatastore())
 
 	arch := make(chan chan apres)
-	w := newLocalWorker(func() (storiface.Storage, error) {
+	w := NewLocalWorkerWithExecutor(func(_ *LocalWorker) (storiface.Storage, error) {
 		return &testExec{apch: arch}, nil
 	}, WorkerConfig{
 		TaskTypes: localTasks,
@@ -675,7 +673,6 @@ func TestRestartWorker(t *testing.T) {
 	<-arch
 	require.NoError(t, w.Close())
 
-	//stm: @WORKER_STATS_001
 	for {
 		if len(m.WorkerStats(ctx)) == 0 {
 			break
@@ -685,7 +682,7 @@ func TestRestartWorker(t *testing.T) {
 	}
 
 	// restart the worker
-	w = newLocalWorker(func() (storiface.Storage, error) {
+	w = NewLocalWorkerWithExecutor(func(_ *LocalWorker) (storiface.Storage, error) {
 		return &testExec{apch: arch}, nil
 	}, WorkerConfig{
 		TaskTypes: localTasks,
@@ -721,7 +718,7 @@ func TestReenableWorker(t *testing.T) {
 	wds := datastore.NewMapDatastore()
 
 	arch := make(chan chan apres)
-	w := newLocalWorker(func() (storiface.Storage, error) {
+	w := NewLocalWorkerWithExecutor(func(_ *LocalWorker) (storiface.Storage, error) {
 		return &testExec{apch: arch}, nil
 	}, WorkerConfig{
 		TaskTypes: localTasks,
@@ -738,7 +735,6 @@ func TestReenableWorker(t *testing.T) {
 	// disable
 	atomic.StoreInt64(&w.testDisable, 1)
 
-	//stm: @WORKER_STATS_001
 	for i := 0; i < 100; i++ {
 		if !m.WorkerStats(ctx)[w.session].Enabled {
 			break
@@ -794,7 +790,7 @@ func TestResUse(t *testing.T) {
 	wds := syncds.MutexWrap(datastore.NewMapDatastore())
 
 	arch := make(chan chan apres)
-	w := newLocalWorker(func() (storiface.Storage, error) {
+	w := NewLocalWorkerWithExecutor(func(_ *LocalWorker) (storiface.Storage, error) {
 		return &testExec{apch: arch}, nil
 	}, WorkerConfig{
 		TaskTypes: localTasks,
@@ -852,7 +848,7 @@ func TestResOverride(t *testing.T) {
 	wds := syncds.MutexWrap(datastore.NewMapDatastore())
 
 	arch := make(chan chan apres)
-	w := newLocalWorker(func() (storiface.Storage, error) {
+	w := NewLocalWorkerWithExecutor(func(_ *LocalWorker) (storiface.Storage, error) {
 		return &testExec{apch: arch}, nil
 	}, WorkerConfig{
 		TaskTypes: localTasks,

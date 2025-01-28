@@ -2,6 +2,7 @@ package paychmgr
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/ipfs/go-cid"
@@ -148,7 +149,7 @@ func (ca *channelAccessor) createVoucher(ctx context.Context, ch address.Address
 		// If there are not enough funds in the channel to cover the voucher,
 		// return a voucher create result with the shortfall
 		var ife insufficientFundsErr
-		if xerrors.As(err, &ife) {
+		if errors.As(err, &ife) {
 			return &api.VoucherCreateResult{
 				Shortfall: ife.Shortfall(),
 			}, nil
@@ -482,7 +483,7 @@ func (ca *channelAccessor) listVouchers(ctx context.Context, ch address.Address)
 // the data store over the chain state
 func (ca *channelAccessor) laneState(ctx context.Context, state lpaych.State, ch address.Address) (map[uint64]lpaych.LaneState, error) {
 	// TODO: we probably want to call UpdateChannelState with all vouchers to be fully correct
-	//  (but technically dont't need to)
+	//  (but technically don't need to)
 
 	laneCount, err := state.LaneCount()
 	if err != nil {

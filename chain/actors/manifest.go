@@ -51,6 +51,12 @@ func RegisterManifest(av actorstypes.Version, manifestCid cid.Cid, entries map[s
 	}
 }
 
+func AddActorMeta(name string, codeId cid.Cid, av actorstypes.Version) {
+	manifestMx.Lock()
+	defer manifestMx.Unlock()
+	actorMeta[codeId] = actorEntry{name: name, version: av}
+}
+
 // GetManifest gets a loaded manifest.
 func GetManifest(av actorstypes.Version) (cid.Cid, bool) {
 	manifestMx.RLock()
@@ -95,7 +101,7 @@ func GetActorCodeIDsFromManifest(av actorstypes.Version) (map[string]cid.Cid, bo
 	return cids, ok
 }
 
-// Given a Manifest CID, get the manifest from the store and Load data into its entries
+// LoadManifest will get the manifest for a given  Manifest CID from the store and Load data into its entries
 func LoadManifest(ctx context.Context, mfCid cid.Cid, adtStore adt.Store) (*manifest.Manifest, error) {
 	var mf manifest.Manifest
 

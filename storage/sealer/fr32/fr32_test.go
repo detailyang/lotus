@@ -2,22 +2,22 @@ package fr32_test
 
 import (
 	"bytes"
+	"crypto/rand"
 	"io"
-	"math/rand"
 	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	ffi "github.com/filecoin-project/filecoin-ffi"
-	commpffi "github.com/filecoin-project/go-commp-utils/ffiwrapper"
 	"github.com/filecoin-project/go-state-types/abi"
 
 	"github.com/filecoin-project/lotus/storage/sealer/fr32"
+	"github.com/filecoin-project/lotus/storage/sealer/mock"
 )
 
 func padFFI(buf []byte) []byte {
-	rf, w, _ := commpffi.ToReadableFile(bytes.NewReader(buf), int64(len(buf)))
+	rf, w, _ := mock.ToReadableFile(bytes.NewReader(buf), int64(len(buf)))
 	tf, _ := os.CreateTemp("/tmp/", "scrb-")
 
 	_, _, _, err := ffi.WriteWithAlignment(abi.RegisteredSealProof_StackedDrg32GiBV1, rf, abi.UnpaddedPieceSize(len(buf)), tf, nil)
@@ -70,10 +70,13 @@ func TestPadChunkFFI(t *testing.T) {
 }
 
 func TestPadChunkRandEqFFI(t *testing.T) {
+
 	for i := 0; i < 200; i++ {
 		var input [127]byte
-		rand.Read(input[:])
-
+		_, err := rand.Read(input[:])
+		if err != nil {
+			panic(err)
+		}
 		var buf [128]byte
 
 		fr32.Pad(input[:], buf[:])
@@ -109,8 +112,10 @@ func TestRoundtrip(t *testing.T) {
 func TestRoundtripChunkRand(t *testing.T) {
 	for i := 0; i < 200; i++ {
 		var input [127]byte
-		rand.Read(input[:])
-
+		_, err := rand.Read(input[:])
+		if err != nil {
+			panic(err)
+		}
 		var buf [128]byte
 		copy(buf[:], input[:])
 
@@ -127,8 +132,10 @@ func TestRoundtrip16MRand(t *testing.T) {
 	up := abi.PaddedPieceSize(16 << 20).Unpadded()
 
 	input := make([]byte, up)
-	rand.Read(input[:])
-
+	_, err := rand.Read(input[:])
+	if err != nil {
+		panic(err)
+	}
 	buf := make([]byte, 16<<20)
 
 	fr32.Pad(input, buf)
