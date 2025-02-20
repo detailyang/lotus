@@ -2,8 +2,11 @@ package cli
 
 import (
 	"bytes"
+	"encoding/csv"
 	"encoding/hex"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 
 	"github.com/urfave/cli/v2"
@@ -19,7 +22,7 @@ import (
 	"github.com/filecoin-project/lotus/chain/types/ethtypes"
 )
 
-var sendCmd = &cli.Command{
+var SendCmd = &cli.Command{
 	Name:      "send",
 	Usage:     "Send funds between accounts",
 	ArgsUsage: "[targetAddress] [amount]",
@@ -69,8 +72,16 @@ var sendCmd = &cli.Command{
 			Name:  "force",
 			Usage: "Deprecated: use global 'force-send'",
 		},
+		&cli.StringFlag{
+			Name:  "csv",
+			Usage: "send multiple transactions from a CSV file (format: Recipient,FIL,Method,Params)",
+		},
 	},
 	Action: func(cctx *cli.Context) error {
+		if csvFile := cctx.String("csv"); csvFile != "" {
+			return handleCSVSend(cctx, csvFile)
+		}
+
 		if cctx.IsSet("force") {
 			fmt.Println("'force' flag is deprecated, use global flag 'force-send'")
 		}
@@ -88,9 +99,24 @@ var sendCmd = &cli.Command{
 		ctx := ReqContext(cctx)
 		var params SendParams
 
+		is0xRecipient := false
 		params.To, err = address.NewFromString(cctx.Args().Get(0))
 		if err != nil {
-			return ShowHelp(cctx, fmt.Errorf("failed to parse target address: %w", err))
+			// could be an ETH address
+			ea, err := ethtypes.ParseEthAddress(cctx.Args().Get(0))
+			if err != nil {
+				return ShowHelp(cctx, fmt.Errorf("failed to parse target address; address must be a valid FIL address or an ETH address: %w", err))
+			}
+			is0xRecipient = true
+			// this will be either "f410f..." or "f0..."
+			params.To, err = ea.ToFilecoinAddress()
+			if err != nil {
+				return ShowHelp(cctx, fmt.Errorf("failed to convert ETH address to FIL address: %w", err))
+			}
+			// ideally, this should never happen
+			if !(params.To.Protocol() == address.ID || params.To.Protocol() == address.Delegated) {
+				return ShowHelp(cctx, fmt.Errorf("ETH addresses can only map to a FIL addresses starting with f410f or f0"))
+			}
 		}
 
 		val, err := types.ParseFIL(cctx.Args().Get(1))
@@ -118,6 +144,12 @@ var sendCmd = &cli.Command{
 			}
 			fmt.Println("f4 addr: ", faddr)
 			params.From = faddr
+		} else {
+			defaddr, err := srv.FullNodeAPI().WalletDefaultAddress(ctx)
+			if err != nil {
+				return fmt.Errorf("failed to get default address: %w", err)
+			}
+			params.From = defaddr
 		}
 
 		if cctx.IsSet("params-hex") {
@@ -128,7 +160,7 @@ var sendCmd = &cli.Command{
 			params.Params = decparams
 		}
 
-		if ethtypes.IsEthAddress(params.From) {
+		if ethtypes.IsEthAddress(params.From) || is0xRecipient {
 			// Method numbers don't make sense from eth accounts.
 			if cctx.IsSet("method") {
 				return xerrors.Errorf("messages from f410f addresses may not specify a method number")
@@ -166,6 +198,8 @@ var sendCmd = &cli.Command{
 		} else {
 			params.Method = abi.MethodNum(cctx.Uint64("method"))
 		}
+
+		_, _ = fmt.Fprintf(cctx.App.Writer, "Sending message from: %s\nSending message to: %s\nUsing Method: %d\n", params.From.String(), params.To.String(), params.Method)
 
 		if cctx.IsSet("gas-premium") {
 			gp, err := types.BigFromString(cctx.String("gas-premium"))
@@ -217,7 +251,134 @@ var sendCmd = &cli.Command{
 			return err
 		}
 
-		fmt.Fprintf(cctx.App.Writer, "%s\n", sm.Cid())
+		_, _ = fmt.Fprintf(cctx.App.Writer, "%s\n", sm.Cid())
 		return nil
 	},
+}
+
+func handleCSVSend(cctx *cli.Context, csvFile string) error {
+	srv, err := GetFullNodeServices(cctx)
+	if err != nil {
+		return err
+	}
+	defer srv.Close() //nolint:errcheck
+
+	ctx := ReqContext(cctx)
+
+	var fromAddr address.Address
+	if from := cctx.String("from"); from != "" {
+		addr, err := address.NewFromString(from)
+		if err != nil {
+			return err
+		}
+		fromAddr = addr
+	} else {
+		defaddr, err := srv.FullNodeAPI().WalletDefaultAddress(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get default address: %w", err)
+		}
+		fromAddr = defaddr
+	}
+
+	// Print sending address
+	_, _ = fmt.Fprintf(cctx.App.Writer, "Sending messages from: %s\n", fromAddr.String())
+
+	fileReader, err := os.Open(csvFile)
+	if err != nil {
+		return xerrors.Errorf("read csv: %w", err)
+	}
+	defer func() {
+		if err := fileReader.Close(); err != nil {
+			log.Errorf("failed to close csv file: %v", err)
+		}
+	}()
+
+	r := csv.NewReader(fileReader)
+	records, err := r.ReadAll()
+	if err != nil {
+		return xerrors.Errorf("read csv: %w", err)
+	}
+
+	// Validate header
+	if len(records) == 0 ||
+		len(records[0]) != 4 ||
+		strings.TrimSpace(records[0][0]) != "Recipient" ||
+		strings.TrimSpace(records[0][1]) != "FIL" ||
+		strings.TrimSpace(records[0][2]) != "Method" ||
+		strings.TrimSpace(records[0][3]) != "Params" {
+		return xerrors.Errorf("expected header row to be \"Recipient,FIL,Method,Params\"")
+	}
+
+	// First pass: validate and build params
+	var sendParams []SendParams
+	totalAmount := abi.NewTokenAmount(0)
+
+	for i, e := range records[1:] {
+		if len(e) != 4 {
+			return xerrors.Errorf("row %d has %d fields, expected 4", i, len(e))
+		}
+
+		var params SendParams
+		params.From = fromAddr
+
+		// Parse recipient
+		var err error
+		params.To, err = address.NewFromString(e[0])
+		if err != nil {
+			return xerrors.Errorf("failed to parse address in row %d: %w", i, err)
+		}
+
+		// Parse value
+		val, err := types.ParseFIL(e[1])
+		if err != nil {
+			return xerrors.Errorf("failed to parse amount in row %d: %w", i, err)
+		}
+		params.Val = abi.TokenAmount(val)
+		totalAmount = types.BigAdd(totalAmount, params.Val)
+
+		// Parse method
+		method, err := strconv.Atoi(strings.TrimSpace(e[2]))
+		if err != nil {
+			return xerrors.Errorf("failed to parse method number in row %d: %w", i, err)
+		}
+		params.Method = abi.MethodNum(method)
+
+		// Parse params
+		if strings.TrimSpace(e[3]) != "nil" {
+			params.Params, err = hex.DecodeString(strings.TrimSpace(e[3]))
+			if err != nil {
+				return xerrors.Errorf("failed to parse hex params in row %d: %w", i, err)
+			}
+		}
+
+		sendParams = append(sendParams, params)
+	}
+
+	// Check sender balance
+	senderBalance, err := srv.FullNodeAPI().WalletBalance(ctx, fromAddr)
+	if err != nil {
+		return xerrors.Errorf("failed to get sender balance: %w", err)
+	}
+
+	if senderBalance.LessThan(totalAmount) {
+		return xerrors.Errorf("insufficient funds: need %s FIL, have %s FIL",
+			types.FIL(totalAmount), types.FIL(senderBalance))
+	}
+
+	// Second pass: perform sends
+	for i, params := range sendParams {
+		proto, err := srv.MessageForSend(ctx, params)
+		if err != nil {
+			return xerrors.Errorf("creating message prototype for row %d: %w", i, err)
+		}
+
+		sm, err := InteractiveSend(ctx, cctx, srv, proto)
+		if err != nil {
+			return xerrors.Errorf("sending message for row %d: %w", i, err)
+		}
+
+		fmt.Printf("Sent message %d: %s\n", i, sm.Cid())
+	}
+
+	return nil
 }

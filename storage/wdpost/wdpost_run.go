@@ -15,7 +15,6 @@ import (
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
 	"github.com/filecoin-project/go-state-types/builtin"
-	"github.com/filecoin-project/go-state-types/builtin/v9/miner"
 	"github.com/filecoin-project/go-state-types/crypto"
 	"github.com/filecoin-project/go-state-types/dline"
 	"github.com/filecoin-project/go-state-types/network"
@@ -24,7 +23,9 @@ import (
 
 	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/build"
+	"github.com/filecoin-project/lotus/build/buildconstants"
 	"github.com/filecoin-project/lotus/chain/actors"
+	"github.com/filecoin-project/lotus/chain/actors/builtin/miner"
 	"github.com/filecoin-project/lotus/chain/actors/policy"
 	"github.com/filecoin-project/lotus/chain/messagepool"
 	"github.com/filecoin-project/lotus/chain/types"
@@ -116,7 +117,6 @@ func (s *WindowPoStScheduler) startSubmitPoST(
 	posts []miner.SubmitWindowedPoStParams,
 	completeSubmitPoST CompleteSubmitPoSTCb,
 ) context.CancelFunc {
-
 	ctx, abort := context.WithCancel(ctx)
 	go func() {
 		defer abort()
@@ -275,7 +275,7 @@ func (s *WindowPoStScheduler) runPoStCycle(ctx context.Context, manual bool, di 
 	log := log.WithOptions(zap.Fields(zap.Time("cycle", start)))
 	log.Infow("starting PoSt cycle", "manual", manual, "ts", ts, "deadline", di.Index)
 	defer func() {
-		log.Infow("post cycle done", "took", time.Now().Sub(start))
+		log.Infow("post cycle done", "took", time.Since(start))
 	}()
 
 	if !manual {
@@ -313,6 +313,7 @@ func (s *WindowPoStScheduler) runPoStCycle(ctx context.Context, manual bool, di 
 	// allowed in a single message
 	partitionBatches, err := s.BatchPartitions(partitions, nv)
 	if err != nil {
+		log.Errorf("batch partitions failed: %+v", err)
 		return nil, err
 	}
 
@@ -522,6 +523,9 @@ func (s *WindowPoStScheduler) runPoStCycle(ctx context.Context, manual bool, di 
 	return posts, nil
 }
 
+// BatchPartitions splits partitions into batches of partitions, so as not to exceed the number of
+// sectors allowed in a single message.
+//
 // Note: Partition order within batches must match original partition order in order
 // for code following the user code to work
 func (s *WindowPoStScheduler) BatchPartitions(partitions []api.Partition, nv network.Version) ([][]api.Partition, error) {
@@ -650,7 +654,7 @@ func (s *WindowPoStScheduler) submitPoStMessage(ctx context.Context, proof *mine
 		Params: enc,
 		Value:  types.NewInt(0),
 	}
-	spec := &api.MessageSendSpec{MaxFee: abi.TokenAmount(s.feeCfg.MaxWindowPoStGasFee)}
+	spec := &api.MessageSendSpec{MaxFee: abi.TokenAmount(s.feeCfg.MaxWindowPoStGasFee), MaximizeFeeCap: s.feeCfg.MaximizeWindowPoStFeeCap}
 	if err := s.prepareMessage(ctx, msg, spec); err != nil {
 		return nil, err
 	}
@@ -663,7 +667,7 @@ func (s *WindowPoStScheduler) submitPoStMessage(ctx context.Context, proof *mine
 	log.Infof("Submitted window post: %s (deadline %d)", sm.Cid(), proof.Deadline)
 
 	go func() {
-		rec, err := s.api.StateWaitMsg(context.TODO(), sm.Cid(), build.MessageConfidence, api.LookbackNoLimit, true)
+		rec, err := s.api.StateWaitMsg(context.TODO(), sm.Cid(), buildconstants.MessageConfidence, api.LookbackNoLimit, true)
 		if err != nil {
 			log.Error(err)
 			return

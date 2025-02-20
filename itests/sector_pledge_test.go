@@ -1,4 +1,3 @@
-// stm: #integration
 package itests
 
 import (
@@ -12,23 +11,20 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/filecoin-project/go-state-types/abi"
+	"github.com/filecoin-project/go-state-types/big"
 	miner5 "github.com/filecoin-project/specs-actors/v5/actors/builtin/miner"
 
 	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/build"
 	"github.com/filecoin-project/lotus/chain/types"
 	"github.com/filecoin-project/lotus/itests/kit"
+	"github.com/filecoin-project/lotus/node/config"
 	"github.com/filecoin-project/lotus/node/impl"
 	sealing "github.com/filecoin-project/lotus/storage/pipeline"
 )
 
 func TestPledgeSectors(t *testing.T) {
-	//stm: @CHAIN_SYNCER_LOAD_GENESIS_001, @CHAIN_SYNCER_FETCH_TIPSET_001,
-	//stm: @CHAIN_SYNCER_START_001, @CHAIN_SYNCER_SYNC_001, @BLOCKCHAIN_BEACON_VALIDATE_BLOCK_VALUES_01
-	//stm: @CHAIN_SYNCER_COLLECT_CHAIN_001, @CHAIN_SYNCER_COLLECT_HEADERS_001, @CHAIN_SYNCER_VALIDATE_TIPSET_001
-	//stm: @CHAIN_SYNCER_NEW_PEER_HEAD_001, @CHAIN_SYNCER_VALIDATE_MESSAGE_META_001, @CHAIN_SYNCER_STOP_001
 
-	//stm: @CHAIN_INCOMING_HANDLE_INCOMING_BLOCKS_001, @CHAIN_INCOMING_VALIDATE_BLOCK_PUBSUB_001, @CHAIN_INCOMING_VALIDATE_MESSAGE_PUBSUB_001
 	kit.QuietMiningLogs()
 
 	blockTime := 50 * time.Millisecond
@@ -38,7 +34,7 @@ func TestPledgeSectors(t *testing.T) {
 		defer cancel()
 
 		_, miner, ens := kit.EnsembleMinimal(t, kit.MockProofs())
-		ens.InterconnectAll().BeginMining(blockTime)
+		ens.InterconnectAll().BeginMiningMustPost(blockTime)
 
 		miner.PledgeSectors(ctx, nSectors, 0, nil)
 	}
@@ -61,15 +57,20 @@ func TestPledgeSectors(t *testing.T) {
 }
 
 func TestPledgeBatching(t *testing.T) {
-	//stm: @SECTOR_PRE_COMMIT_FLUSH_001, @SECTOR_COMMIT_FLUSH_001
 	blockTime := 50 * time.Millisecond
 
-	runTest := func(t *testing.T, nSectors int) {
+	runTest := func(t *testing.T, nSectors int, aggregate bool) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		client, miner, ens := kit.EnsembleMinimal(t, kit.MockProofs())
-		ens.InterconnectAll().BeginMining(blockTime)
+		kit.QuietMiningLogs()
+
+		client, miner, ens := kit.EnsembleMinimal(t, kit.MockProofs(!aggregate), kit.MutateSealingConfig(func(sc *config.SealingConfig) {
+			if aggregate {
+				sc.AggregateAboveBaseFee = types.FIL(big.Zero())
+			}
+		}))
+		ens.InterconnectAll().BeginMiningMustPost(blockTime)
 
 		client.WaitTillChain(ctx, kit.HeightAtLeast(10))
 
@@ -113,17 +114,15 @@ func TestPledgeBatching(t *testing.T) {
 	}
 
 	t.Run("100", func(t *testing.T) {
-		runTest(t, 100)
+		runTest(t, 100, false)
+	})
+	t.Run("10-agg", func(t *testing.T) {
+		runTest(t, 10, true)
 	})
 }
 
 func TestPledgeMaxBatching(t *testing.T) {
-	//stm: @CHAIN_SYNCER_LOAD_GENESIS_001, @CHAIN_SYNCER_FETCH_TIPSET_001,
-	//stm: @CHAIN_SYNCER_START_001, @CHAIN_SYNCER_SYNC_001, @BLOCKCHAIN_BEACON_VALIDATE_BLOCK_VALUES_01
-	//stm: @CHAIN_SYNCER_COLLECT_CHAIN_001, @CHAIN_SYNCER_COLLECT_HEADERS_001, @CHAIN_SYNCER_VALIDATE_TIPSET_001
-	//stm: @CHAIN_SYNCER_NEW_PEER_HEAD_001, @CHAIN_SYNCER_VALIDATE_MESSAGE_META_001, @CHAIN_SYNCER_STOP_001
 
-	//stm: @CHAIN_INCOMING_HANDLE_INCOMING_BLOCKS_001, @CHAIN_INCOMING_VALIDATE_BLOCK_PUBSUB_001, @CHAIN_INCOMING_VALIDATE_MESSAGE_PUBSUB_001
 	blockTime := 50 * time.Millisecond
 
 	runTest := func(t *testing.T) {
@@ -187,11 +186,63 @@ func TestPledgeMaxBatching(t *testing.T) {
 		}
 
 		// Ensure that max aggregate message has propagated to the other node by checking current state
-		//stm: @CHAIN_STATE_MINER_SECTORS_001
 		sectorInfosAfter, err := full.StateMinerSectors(ctx, miner.ActorAddr, nil, types.EmptyTSK)
 		require.NoError(t, err)
 		assert.Equal(t, miner5.MaxAggregatedSectors+kit.DefaultPresealsPerBootstrapMiner, len(sectorInfosAfter))
 	}
 
 	t.Run("Force max prove commit aggregate size", runTest)
+}
+
+func TestPledgeSynth(t *testing.T) {
+	kit.QuietMiningLogs()
+
+	blockTime := 50 * time.Millisecond
+
+	runTest := func(t *testing.T, nSectors int) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		_, miner, ens := kit.EnsembleMinimal(t, kit.MutateSealingConfig(func(sc *config.SealingConfig) {
+			sc.UseSyntheticPoRep = true
+		})) // no mock proofs
+
+		ens.InterconnectAll().BeginMiningMustPost(blockTime)
+
+		miner.PledgeSectors(ctx, nSectors, 0, nil)
+	}
+
+	t.Run("1", func(t *testing.T) {
+		runTest(t, 1)
+	})
+
+	t.Run("3", func(t *testing.T) {
+		runTest(t, 3)
+	})
+}
+
+func TestSectorsSummary(t *testing.T) {
+	kit.QuietMiningLogs()
+
+	blockTime := 50 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	nPreseal := 2
+
+	_, miner, ens := kit.EnsembleMinimal(t, kit.MockProofs(), kit.PresealSectors(nPreseal))
+	ens.InterconnectAll().BeginMining(blockTime)
+
+	miner.PledgeSectors(ctx, 1, 0, nil)
+
+	ms, err := miner.SectorsSummary(ctx)
+	require.NoError(t, err)
+
+	require.Len(t, ms, 1) // all proving
+
+	for st, n := range ms {
+		require.Equal(t, api.SectorState(sealing.Proving), st)
+		require.Equal(t, 1+nPreseal, n)
+	}
 }

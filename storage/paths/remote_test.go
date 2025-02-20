@@ -1,4 +1,3 @@
-// stm: #unit
 package paths_test
 
 import (
@@ -59,7 +58,7 @@ func createTestStorage(t *testing.T, p string, seal bool, att ...*paths.Local) s
 func TestMoveShared(t *testing.T) {
 	logging.SetAllLoggers(logging.LevelDebug)
 
-	index := paths.NewIndex(nil)
+	index := paths.NewMemIndex(nil)
 
 	ctx := context.Background()
 
@@ -150,7 +149,6 @@ func TestMoveShared(t *testing.T) {
 }
 
 func TestReader(t *testing.T) {
-	//stm: @STORAGE_INFO_001
 	logging.SetAllLoggers(logging.LevelDebug)
 	bz := []byte("Hello World")
 

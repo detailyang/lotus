@@ -26,6 +26,8 @@ import (
 	"github.com/filecoin-project/go-state-types/crypto"
 	"github.com/filecoin-project/pubsub"
 
+	"github.com/filecoin-project/lotus/build/buildconstants"
+	"github.com/filecoin-project/lotus/chain/actors/policy"
 	"github.com/filecoin-project/lotus/chain/consensus"
 	"github.com/filecoin-project/lotus/node/modules/dtypes"
 
@@ -171,14 +173,14 @@ func (syncer *Syncer) Start() {
 
 func (syncer *Syncer) runMetricsTricker(tickerCtx context.Context) {
 	genesisTime := time.Unix(int64(syncer.Genesis.MinTimestamp()), 0)
-	ticker := build.Clock.Ticker(time.Duration(build.BlockDelaySecs) * time.Second)
+	ticker := build.Clock.Ticker(time.Duration(buildconstants.BlockDelaySecs) * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
 			sinceGenesis := build.Clock.Now().Sub(genesisTime)
-			expectedHeight := int64(sinceGenesis.Seconds()) / int64(build.BlockDelaySecs)
+			expectedHeight := int64(sinceGenesis.Seconds()) / int64(buildconstants.BlockDelaySecs)
 
 			stats.Record(tickerCtx, metrics.ChainNodeHeightExpected.M(expectedHeight))
 		case <-tickerCtx.Done():
@@ -287,7 +289,7 @@ func (syncer *Syncer) IncomingBlocks(ctx context.Context) (<-chan *types.BlockHe
 // messages within this block. If validation passes, it stores the messages in
 // the underlying IPLD block store.
 func (syncer *Syncer) ValidateMsgMeta(fblk *types.FullBlock) error {
-	if msgc := len(fblk.BlsMessages) + len(fblk.SecpkMessages); msgc > build.BlockMessageLimit {
+	if msgc := len(fblk.BlsMessages) + len(fblk.SecpkMessages); msgc > buildconstants.BlockMessageLimit {
 		return xerrors.Errorf("block %s has too many messages (%d)", fblk.Header.Cid(), msgc)
 	}
 
@@ -518,12 +520,31 @@ func (syncer *Syncer) Sync(ctx context.Context, maybeHead *types.TipSet) error {
 
 	hts := syncer.store.GetHeaviestTipSet()
 
+	// noop pre-checks
 	if hts.ParentWeight().GreaterThan(maybeHead.ParentWeight()) {
 		return nil
 	}
 	if syncer.Genesis.Equals(maybeHead) || hts.Equals(maybeHead) {
 		return nil
 	}
+
+	if maybeHead.Height() == hts.Height() {
+		// check if maybeHead is fully contained in headTipSet
+		// meaning we already synced all the blocks that are a part of maybeHead
+		// if that is the case, there is nothing for us to do
+		// we need to exit out early, otherwise checkpoint-fork logic might wrongly reject it
+		fullyContained := true
+		for _, c := range maybeHead.Cids() {
+			if !hts.Contains(c) {
+				fullyContained = false
+				break
+			}
+		}
+		if fullyContained {
+			return nil
+		}
+	}
+	// end of noop prechecks
 
 	if err := syncer.collectChain(ctx, maybeHead, hts, false); err != nil {
 		span.AddAttributes(trace.StringAttribute("col_error", err.Error()))
@@ -579,7 +600,7 @@ func (syncer *Syncer) ValidateTipSet(ctx context.Context, fts *store.FullTipSet,
 		futures = append(futures, async.Err(func() error {
 			if err := syncer.ValidateBlock(ctx, b, useCache); err != nil {
 				if isPermanent(err) {
-					syncer.bad.Add(b.Cid(), NewBadBlockReason([]cid.Cid{b.Cid()}, err.Error()))
+					syncer.bad.Add(b.Cid(), NewBadBlockReason([]cid.Cid{b.Cid()}, "%s", err.Error()))
 				}
 				return xerrors.Errorf("validating block %s: %w", b.Cid(), err)
 			}
@@ -704,25 +725,25 @@ func (syncer *Syncer) collectHeaders(ctx context.Context, incoming *types.TipSet
 	}
 
 	{
-		// ensure consistency of beacon entires
+		// ensure consistency of beacon entries
 		targetBE := incoming.Blocks()[0].BeaconEntries
 		sorted := sort.SliceIsSorted(targetBE, func(i, j int) bool {
 			return targetBE[i].Round < targetBE[j].Round
 		})
 		if !sorted {
-			syncer.bad.Add(incoming.Cids()[0], NewBadBlockReason(incoming.Cids(), "wrong order of beacon entires"))
-			return nil, xerrors.Errorf("wrong order of beacon entires")
+			syncer.bad.Add(incoming.Cids()[0], NewBadBlockReason(incoming.Cids(), "wrong order of beacon entries"))
+			return nil, xerrors.Errorf("wrong order of beacon entries")
 		}
 
 		for _, bh := range incoming.Blocks()[1:] {
 			if len(targetBE) != len(bh.BeaconEntries) {
 				// cannot mark bad, I think @Kubuxu
-				return nil, xerrors.Errorf("tipset contained different number for beacon entires")
+				return nil, xerrors.Errorf("tipset contained different number for beacon entries")
 			}
 			for i, be := range bh.BeaconEntries {
 				if targetBE[i].Round != be.Round || !bytes.Equal(targetBE[i].Data, be.Data) {
 					// cannot mark bad, I think @Kubuxu
-					return nil, xerrors.Errorf("tipset contained different beacon entires")
+					return nil, xerrors.Errorf("tipset contained different beacon entries")
 				}
 			}
 
@@ -843,8 +864,18 @@ loop:
 	if err != nil {
 		return nil, xerrors.Errorf("failed to load next local tipset: %w", err)
 	}
+
+	if !ignoreCheckpoint {
+		if chkpt := syncer.store.GetCheckpoint(); chkpt != nil && base.Height() <= chkpt.Height() {
+			for _, b := range incoming.Blocks() {
+				syncer.bad.Add(b.Cid(), NewBadBlockReason(incoming.Cids(), "diverges from checkpoint"))
+			}
+			return nil, xerrors.Errorf("merge point affecting the checkpoing: %w", ErrForkCheckpoint)
+		}
+	}
+
 	if base.IsChildOf(knownParent) {
-		// common case: receiving a block thats potentially part of the same tipset as our best block
+		// common case: receiving a block that's potentially part of the same tipset as our best block
 		return blockSet, nil
 	}
 
@@ -852,7 +883,7 @@ loop:
 	log.Warnf("(fork detected) synced header chain (%s - %d) does not link to our best block (%s - %d)", incoming.Cids(), incoming.Height(), known.Cids(), known.Height())
 	fork, err := syncer.syncFork(ctx, base, known, ignoreCheckpoint)
 	if err != nil {
-		if xerrors.Is(err, ErrForkTooLong) || xerrors.Is(err, ErrForkCheckpoint) {
+		if errors.Is(err, ErrForkTooLong) || errors.Is(err, ErrForkCheckpoint) {
 			// TODO: we're marking this block bad in the same way that we mark invalid blocks bad. Maybe distinguish?
 			log.Warn("adding forked chain to our bad tipset cache")
 			for _, b := range incoming.Blocks() {
@@ -873,7 +904,7 @@ var ErrForkCheckpoint = fmt.Errorf("fork would require us to diverge from checkp
 // syncFork tries to obtain the chain fragment that links a fork into a common
 // ancestor in our view of the chain.
 //
-// If the fork is too long (build.ForkLengthThreshold), or would cause us to diverge from the checkpoint (ErrForkCheckpoint),
+// If the fork is too long (policy.ChainFinality), or would cause us to diverge from the checkpoint (ErrForkCheckpoint),
 // we add the entire subchain to the denylist. Else, we find the common ancestor, and add the missing chain
 // fragment until the fork point to the returned []TipSet.
 func (syncer *Syncer) syncFork(ctx context.Context, incoming *types.TipSet, known *types.TipSet, ignoreCheckpoint bool) ([]*types.TipSet, error) {
@@ -886,9 +917,38 @@ func (syncer *Syncer) syncFork(ctx context.Context, incoming *types.TipSet, know
 		}
 	}
 
+	incomingParentsTsk := incoming.Parents()
+	commonParent := false
+	for _, incomingParent := range incomingParentsTsk.Cids() {
+		if known.Contains(incomingParent) {
+			commonParent = true
+		}
+	}
+
+	if commonParent {
+		// known contains at least one of incoming's Parents => the common ancestor is known's Parents (incoming's Grandparents)
+		// in this case, we need to return {incoming.Parents()}
+		incomingParents, err := syncer.store.LoadTipSet(ctx, incomingParentsTsk)
+		if err != nil {
+			// fallback onto the network
+			tips, err := syncer.Exchange.GetBlocks(ctx, incoming.Parents(), 1)
+			if err != nil {
+				return nil, xerrors.Errorf("failed to fetch incomingParents from the network: %w", err)
+			}
+
+			if len(tips) == 0 {
+				return nil, xerrors.Errorf("network didn't return any tipsets")
+			}
+
+			incomingParents = tips[0]
+		}
+
+		return []*types.TipSet{incomingParents}, nil
+	}
+
 	// TODO: Does this mean we always ask for ForkLengthThreshold blocks from the network, even if we just need, like, 2? Yes.
 	// Would it not be better to ask in smaller chunks, given that an ~ForkLengthThreshold is very rare?
-	tips, err := syncer.Exchange.GetBlocks(ctx, incoming.Parents(), int(build.ForkLengthThreshold))
+	tips, err := syncer.Exchange.GetBlocks(ctx, incoming.Parents(), int(policy.ChainFinality))
 	if err != nil {
 		return nil, err
 	}
@@ -920,7 +980,7 @@ func (syncer *Syncer) syncFork(ctx context.Context, incoming *types.TipSet, know
 			// Walk back one block in our synced chain to try to meet the fork's
 			// height.
 			forkLengthInHead++
-			if forkLengthInHead > int(build.ForkLengthThreshold) {
+			if forkLengthInHead > int(policy.ChainFinality) {
 				return nil, ErrForkTooLong
 			}
 
@@ -1028,7 +1088,7 @@ func (syncer *Syncer) iterFullTipsets(ctx context.Context, headers []*types.TipS
 
 func checkMsgMeta(ts *types.TipSet, allbmsgs []*types.Message, allsmsgs []*types.SignedMessage, bmi, smi [][]uint64) error {
 	for bi, b := range ts.Blocks() {
-		if msgc := len(bmi[bi]) + len(smi[bi]); msgc > build.BlockMessageLimit {
+		if msgc := len(bmi[bi]) + len(smi[bi]); msgc > buildconstants.BlockMessageLimit {
 			return fmt.Errorf("block %q has too many messages (%d)", b.Cid(), msgc)
 		}
 
@@ -1094,8 +1154,8 @@ func (syncer *Syncer) fetchMessages(ctx context.Context, headers []*types.TipSet
 						requestErr = multierror.Append(requestErr, err)
 					} else {
 						isGood := true
-						for index, ts := range headers[nextI:lastI] {
-							cm := result[index]
+						for index, cm := range result {
+							ts := headers[nextI+index]
 							if err := checkMsgMeta(ts, cm.Bls, cm.Secpk, cm.BlsIncludes, cm.SecpkIncludes); err != nil {
 								log.Errorf("fetched messages not as expected: %s", err)
 								isGood = false

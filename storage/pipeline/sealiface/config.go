@@ -60,4 +60,11 @@ type Config struct {
 	TerminateBatchMax  uint64
 	TerminateBatchMin  uint64
 	TerminateBatchWait time.Duration
+
+	UseSyntheticPoRep bool
+
+	RequireActivationSuccess         bool
+	RequireActivationSuccessUpdate   bool
+	RequireNotificationSuccess       bool
+	RequireNotificationSuccessUpdate bool
 }

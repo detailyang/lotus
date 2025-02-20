@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -31,7 +32,7 @@ const (
 	metadataTraceContext = "traceContext"
 )
 
-// GetAPIInfo returns the API endpoint to use for the specified kind of repo.
+// GetAPIInfoMulti returns the API endpoints to use for the specified kind of repo.
 //
 // The order of precedence is as follows:
 //
@@ -76,42 +77,8 @@ func GetAPIInfoMulti(ctx *cli.Context, t repo.RepoType) ([]APIInfo, error) {
 		if path == "" {
 			continue
 		}
-
-		p, err := homedir.Expand(path)
-		if err != nil {
-			return []APIInfo{}, xerrors.Errorf("could not expand home dir (%s): %w", f, err)
-		}
-
-		r, err := repo.NewFS(p)
-		if err != nil {
-			return []APIInfo{}, xerrors.Errorf("could not open repo at path: %s; %w", p, err)
-		}
-
-		exists, err := r.Exists()
-		if err != nil {
-			return []APIInfo{}, xerrors.Errorf("repo.Exists returned an error: %w", err)
-		}
-
-		if !exists {
-			return []APIInfo{}, errors.New("repo directory does not exist. Make sure your configuration is correct")
-		}
-
-		ma, err := r.APIEndpoint()
-		if err != nil {
-			return []APIInfo{}, xerrors.Errorf("could not get api endpoint: %w", err)
-		}
-
-		token, err := r.APIToken()
-		if err != nil {
-			log.Warnf("Couldn't load CLI token, capabilities may be limited: %v", err)
-		}
-
-		return []APIInfo{{
-			Addr:  ma.String(),
-			Token: token,
-		}}, nil
+		return GetAPIInfoFromRepoPath(path, t)
 	}
-
 	for _, env := range fallbacksEnvs {
 		env, ok := os.LookupEnv(env)
 		if ok {
@@ -119,7 +86,43 @@ func GetAPIInfoMulti(ctx *cli.Context, t repo.RepoType) ([]APIInfo, error) {
 		}
 	}
 
-	return []APIInfo{}, fmt.Errorf("could not determine API endpoint for node type: %v", t.Type())
+	return []APIInfo{}, fmt.Errorf("could not determine API endpoint for node type: %v. Try setting environment variable: %s", t.Type(), primaryEnv)
+}
+
+func GetAPIInfoFromRepoPath(path string, t repo.RepoType) ([]APIInfo, error) {
+	p, err := homedir.Expand(path)
+	if err != nil {
+		return []APIInfo{}, xerrors.Errorf("could not expand home dir (%s): %w", path, err)
+	}
+
+	r, err := repo.NewFS(p)
+	if err != nil {
+		return []APIInfo{}, xerrors.Errorf("could not open repo at path: %s; %w", p, err)
+	}
+
+	exists, err := r.Exists()
+	if err != nil {
+		return []APIInfo{}, xerrors.Errorf("repo.Exists returned an error: %w", err)
+	}
+
+	if !exists {
+		return []APIInfo{}, errors.New("repo directory does not exist. Make sure your configuration is correct")
+	}
+
+	ma, err := r.APIEndpoint()
+	if err != nil {
+		return []APIInfo{}, xerrors.Errorf("could not get api endpoint: %w", err)
+	}
+
+	token, err := r.APIToken()
+	if err != nil {
+		log.Warnf("Couldn't load CLI token, capabilities may be limited: %v", err)
+	}
+
+	return []APIInfo{{
+		Addr:  ma.String(),
+		Token: token,
+	}}, nil
 }
 
 func GetAPIInfo(ctx *cli.Context, t repo.RepoType) (APIInfo, error) {
@@ -177,7 +180,7 @@ func GetRawAPI(ctx *cli.Context, t repo.RepoType, version string) (string, http.
 	return heads[0].addr, heads[0].header, nil
 }
 
-func GetCommonAPI(ctx *cli.Context) (api.CommonNet, jsonrpc.ClientCloser, error) {
+func GetCommonAPI(ctx *cli.Context) (api.Common, jsonrpc.ClientCloser, error) {
 	ti, ok := ctx.App.Metadata["repoType"]
 	if !ok {
 		log.Errorf("unknown repo type, are you sure you want to use GetCommonAPI?")
@@ -227,9 +230,12 @@ func GetFullNodeAPI(ctx *cli.Context) (v0api.FullNode, jsonrpc.ClientCloser, err
 
 type contextKey string
 
-// Not thread safe
+// OnSingleNode returns a modified context that, when passed to a method on a FullNodeProxy, will
+// cause all calls to be directed at the same node when possible.
+//
+// Think "sticky sessions".
 func OnSingleNode(ctx context.Context) context.Context {
-	return context.WithValue(ctx, contextKey("retry-node"), new(*int))
+	return context.WithValue(ctx, contextKey("retry-node"), new(atomic.Int32))
 }
 
 func FullNodeProxy[T api.FullNode](ins []T, outstr *api.FullNodeStruct) {
@@ -260,27 +266,29 @@ func FullNodeProxy[T api.FullNode](ins []T, outstr *api.FullNodeStruct) {
 
 				ctx := args[0].Interface().(context.Context)
 
-				curr := -1
-
 				// for calls that need to be performed on the same node
 				// primarily for miner when calling create block and submit block subsequently
-				key := contextKey("retry-node")
-				if ctx.Value(key) != nil {
-					if (*ctx.Value(key).(**int)) == nil {
-						*ctx.Value(key).(**int) = &curr
-					} else {
-						curr = **ctx.Value(key).(**int) - 1
-					}
+				var curr *atomic.Int32
+				if v, ok := ctx.Value(contextKey("retry-node")).(*atomic.Int32); ok {
+					curr = v
+				} else {
+					curr = new(atomic.Int32)
 				}
 
-				total := len(rins)
+				total := int32(len(rins))
 				result, _ := retry.Retry(ctx, 5, initialBackoff, errorsToRetry, func() ([]reflect.Value, error) {
-					curr = (curr + 1) % total
-
-					result := fns[curr].Call(args)
+					idx := curr.Load()
+					result := fns[idx].Call(args)
 					if result[len(result)-1].IsNil() {
 						return result, nil
 					}
+					// On failure, switch to the next node.
+					//
+					// We CAS instead of incrementing because this might have
+					// already been incremented by a concurrent call if we have
+					// a shared `curr` (we're sticky to a single node).
+					curr.CompareAndSwap(idx, (idx+1)%total)
+
 					e := result[len(result)-1].Interface().(error)
 					return result, e
 				})
@@ -320,14 +328,14 @@ func GetFullNodeAPIV1Single(ctx *cli.Context) (v1api.FullNode, jsonrpc.ClientClo
 }
 
 type GetFullNodeOptions struct {
-	ethSubHandler api.EthSubscriber
+	EthSubHandler api.EthSubscriber
 }
 
 type GetFullNodeOption func(*GetFullNodeOptions)
 
 func FullNodeWithEthSubscribtionHandler(sh api.EthSubscriber) GetFullNodeOption {
 	return func(opts *GetFullNodeOptions) {
-		opts.ethSubHandler = sh
+		opts.EthSubHandler = sh
 	}
 }
 
@@ -342,8 +350,8 @@ func GetFullNodeAPIV1(ctx *cli.Context, opts ...GetFullNodeOption) (v1api.FullNo
 	}
 
 	var rpcOpts []jsonrpc.Option
-	if options.ethSubHandler != nil {
-		rpcOpts = append(rpcOpts, jsonrpc.WithClientHandler("Filecoin", options.ethSubHandler), jsonrpc.WithClientHandlerAlias("eth_subscription", "Filecoin.EthSubscription"))
+	if options.EthSubHandler != nil {
+		rpcOpts = append(rpcOpts, jsonrpc.WithClientHandler("Filecoin", options.EthSubHandler), jsonrpc.WithClientHandlerAlias("eth_subscription", "Filecoin.EthSubscription"))
 	}
 
 	heads, err := GetRawAPIMulti(ctx, repo.FullNode, "v1")
@@ -452,27 +460,6 @@ func GetWorkerAPI(ctx *cli.Context) (api.Worker, jsonrpc.ClientCloser, error) {
 	}
 
 	return client.NewWorkerRPCV0(ctx.Context, addr, headers)
-}
-
-func GetMarketsAPI(ctx *cli.Context) (api.StorageMiner, jsonrpc.ClientCloser, error) {
-	// to support lotus-miner cli tests.
-	if tn, ok := ctx.App.Metadata["testnode-storage"]; ok {
-		return tn.(api.StorageMiner), func() {}, nil
-	}
-
-	addr, headers, err := GetRawAPI(ctx, repo.Markets, "v0")
-	if err != nil {
-		return nil, nil, err
-	}
-
-	if IsVeryVerbose {
-		_, _ = fmt.Fprintln(ctx.App.Writer, "using markets API v0 endpoint:", addr)
-	}
-
-	// the markets node is a specialised miner's node, supporting only the
-	// markets API, which is a subset of the miner API. All non-markets
-	// operations will error out with "unsupported".
-	return client.NewStorageMinerRPCV0(ctx.Context, addr, headers)
 }
 
 func GetGatewayAPI(ctx *cli.Context) (api.Gateway, jsonrpc.ClientCloser, error) {

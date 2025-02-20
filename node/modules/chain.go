@@ -14,14 +14,13 @@ import (
 
 	"github.com/filecoin-project/lotus/blockstore"
 	"github.com/filecoin-project/lotus/blockstore/splitstore"
-	"github.com/filecoin-project/lotus/build"
+	"github.com/filecoin-project/lotus/build/buildconstants"
 	"github.com/filecoin-project/lotus/chain"
 	"github.com/filecoin-project/lotus/chain/beacon"
 	"github.com/filecoin-project/lotus/chain/consensus"
 	"github.com/filecoin-project/lotus/chain/consensus/filcns"
 	"github.com/filecoin-project/lotus/chain/exchange"
 	"github.com/filecoin-project/lotus/chain/gen/slashfilter"
-	"github.com/filecoin-project/lotus/chain/index"
 	"github.com/filecoin-project/lotus/chain/messagepool"
 	"github.com/filecoin-project/lotus/chain/stmgr"
 	"github.com/filecoin-project/lotus/chain/store"
@@ -40,7 +39,7 @@ func ChainBitswap(lc fx.Lifecycle, mctx helpers.MetricsCtx, host host.Host, rt r
 
 	// Write all incoming bitswap blocks into a temporary blockstore for two
 	// block times. If they validate, they'll be persisted later.
-	cache := blockstore.NewTimedCacheBlockstore(2 * time.Duration(build.BlockDelaySecs) * time.Second)
+	cache := blockstore.NewTimedCacheBlockstore(2 * time.Duration(buildconstants.BlockDelaySecs) * time.Second)
 	lc.Append(fx.Hook{OnStop: cache.Stop, OnStart: cache.Start})
 
 	bitswapBs := blockstore.NewTieredBstore(bs, cache)
@@ -82,12 +81,12 @@ func ChainStore(lc fx.Lifecycle,
 	basebs dtypes.BaseBlockstore,
 	weight store.WeightFunc,
 	us stmgr.UpgradeSchedule,
-	j journal.Journal) *store.ChainStore {
+	j journal.Journal) (*store.ChainStore, error) {
 
 	chain := store.NewChainStore(cbs, sbs, ds, weight, j)
 
 	if err := chain.Load(helpers.LifecycleCtx(mctx, lc)); err != nil {
-		log.Warnf("loading chain state from disk: %s", err)
+		return nil, xerrors.Errorf("loading chain state from disk: %w", err)
 	}
 
 	var startHook func(context.Context) error
@@ -108,7 +107,7 @@ func ChainStore(lc fx.Lifecycle,
 		},
 	})
 
-	return chain
+	return chain, nil
 }
 
 func NetworkName(mctx helpers.MetricsCtx,
@@ -118,13 +117,13 @@ func NetworkName(mctx helpers.MetricsCtx,
 	syscalls vm.SyscallBuilder,
 	us stmgr.UpgradeSchedule,
 	_ dtypes.AfterGenesisSet) (dtypes.NetworkName, error) {
-	if !build.Devnet {
+	if !buildconstants.Devnet {
 		return "testnetnet", nil
 	}
 
 	ctx := helpers.LifecycleCtx(mctx, lc)
 
-	sm, err := stmgr.NewStateManager(cs, tsexec, syscalls, us, nil, nil, index.DummyMsgIndex)
+	sm, err := stmgr.NewStateManager(cs, tsexec, syscalls, us, nil, nil, nil)
 	if err != nil {
 		return "", err
 	}

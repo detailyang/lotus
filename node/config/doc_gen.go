@@ -9,7 +9,7 @@ type DocField struct {
 }
 
 var Doc = map[string][]DocField{
-	"API": []DocField{
+	"API": {
 		{
 			Name: "ListenAddress",
 			Type: "string",
@@ -29,7 +29,23 @@ var Doc = map[string][]DocField{
 			Comment: ``,
 		},
 	},
-	"Backup": []DocField{
+	"ApisConfig": {
+		{
+			Name: "ChainApiInfo",
+			Type: "[]string",
+
+			Comment: `ChainApiInfo is the API endpoint for the Lotus daemon.`,
+		},
+		{
+			Name: "StorageRPCSecret",
+			Type: "string",
+
+			Comment: `RPC Secret for the storage subsystem.
+If integrating with lotus-miner this must match the value from
+cat ~/.lotusminer/keystore/MF2XI2BNNJ3XILLQOJUXMYLUMU | jq -r .PrivateKey`,
+		},
+	},
+	"Backup": {
 		{
 			Name: "DisableMetadataLog",
 			Type: "bool",
@@ -41,7 +57,7 @@ Note that in case of metadata corruption it might be much harder to recover
 your node if metadata log is disabled`,
 		},
 	},
-	"BatchFeeConfig": []DocField{
+	"BatchFeeConfig": {
 		{
 			Name: "Base",
 			Type: "types.FIL",
@@ -55,7 +71,69 @@ your node if metadata log is disabled`,
 			Comment: ``,
 		},
 	},
-	"Chainstore": []DocField{
+	"ChainIndexerConfig": {
+		{
+			Name: "EnableIndexer",
+			Type: "bool",
+
+			Comment: `EnableIndexer controls whether the chain indexer is active.
+The chain indexer is responsible for indexing tipsets, messages, and events from the chain state.
+It is a crucial component for optimizing Lotus RPC response times.
+
+Default: false (indexer is disabled)
+
+Setting this to true will enable the indexer, which will significantly improve RPC performance.
+It is strongly recommended to keep this set to true if you are an RPC provider.
+
+If EnableEthRPC or EnableActorEventsAPI are set to true, the ChainIndexer must be enabled using
+this option to avoid errors at startup.`,
+		},
+		{
+			Name: "GCRetentionEpochs",
+			Type: "int64",
+
+			Comment: `GCRetentionEpochs specifies the number of epochs for which data is retained in the Indexer.
+The garbage collection (GC) process removes data older than this retention period.
+Setting this to 0 disables GC, preserving all historical data indefinitely.
+
+If set, the minimum value must be greater than builtin.EpochsInDay (i.e. "2880" epochs for mainnet).
+This ensures a reasonable retention period for the indexed data.
+
+Default: 0 (GC disabled)`,
+		},
+		{
+			Name: "ReconcileEmptyIndex",
+			Type: "bool",
+
+			Comment: `ReconcileEmptyIndex determines whether to reconcile the index with the chain state
+during startup when the index is empty.
+
+When set to true:
+- On startup, if the index is empty, the indexer will index the available
+chain state on the node albeit within the MaxReconcileTipsets limit.
+
+When set to false:
+- The indexer will not automatically re-index the chain state on startup if the index is empty.
+
+Default: false
+
+Note: The number of tipsets reconciled (i.e. indexed) during this process can be
+controlled using the MaxReconcileTipsets option.`,
+		},
+		{
+			Name: "MaxReconcileTipsets",
+			Type: "uint64",
+
+			Comment: `MaxReconcileTipsets limits the number of tipsets to reconcile with the chain during startup.
+It represents the maximum number of tipsets to index from the chain state that are absent in the index.
+
+Default: 3 * epochsPerDay (approximately 3 days of chain history)
+
+Note: Setting this value too low may result in incomplete indexing, while setting it too high
+may increase startup time.`,
+		},
+	},
+	"Chainstore": {
 		{
 			Name: "EnableSplitstore",
 			Type: "bool",
@@ -69,55 +147,7 @@ your node if metadata log is disabled`,
 			Comment: ``,
 		},
 	},
-	"Client": []DocField{
-		{
-			Name: "UseIpfs",
-			Type: "bool",
-
-			Comment: ``,
-		},
-		{
-			Name: "IpfsOnlineMode",
-			Type: "bool",
-
-			Comment: ``,
-		},
-		{
-			Name: "IpfsMAddr",
-			Type: "string",
-
-			Comment: ``,
-		},
-		{
-			Name: "IpfsUseForRetrieval",
-			Type: "bool",
-
-			Comment: ``,
-		},
-		{
-			Name: "SimultaneousTransfersForStorage",
-			Type: "uint64",
-
-			Comment: `The maximum number of simultaneous data transfers between the client
-and storage providers for storage deals`,
-		},
-		{
-			Name: "SimultaneousTransfersForRetrieval",
-			Type: "uint64",
-
-			Comment: `The maximum number of simultaneous data transfers between the client
-and storage providers for retrieval deals`,
-		},
-		{
-			Name: "OffChainRetrieval",
-			Type: "bool",
-
-			Comment: `Require that retrievals perform no on-chain operations. Paid retrievals
-without existing payment channels with available funds will fail instead
-of automatically performing on-chain operations.`,
-		},
-	},
-	"Common": []DocField{
+	"Common": {
 		{
 			Name: "API",
 			Type: "API",
@@ -136,240 +166,41 @@ of automatically performing on-chain operations.`,
 
 			Comment: ``,
 		},
-		{
-			Name: "Libp2p",
-			Type: "Libp2p",
-
-			Comment: ``,
-		},
-		{
-			Name: "Pubsub",
-			Type: "Pubsub",
-
-			Comment: ``,
-		},
 	},
-	"DAGStoreConfig": []DocField{
-		{
-			Name: "RootDir",
-			Type: "string",
-
-			Comment: `Path to the dagstore root directory. This directory contains three
-subdirectories, which can be symlinked to alternative locations if
-need be:
-- ./transients: caches unsealed deals that have been fetched from the
-storage subsystem for serving retrievals.
-- ./indices: stores shard indices.
-- ./datastore: holds the KV store tracking the state of every shard
-known to the DAG store.
-Default value: <LOTUS_MARKETS_PATH>/dagstore (split deployment) or
-<LOTUS_MINER_PATH>/dagstore (monolith deployment)`,
-		},
-		{
-			Name: "MaxConcurrentIndex",
-			Type: "int",
-
-			Comment: `The maximum amount of indexing jobs that can run simultaneously.
-0 means unlimited.
-Default value: 5.`,
-		},
-		{
-			Name: "MaxConcurrentReadyFetches",
-			Type: "int",
-
-			Comment: `The maximum amount of unsealed deals that can be fetched simultaneously
-from the storage subsystem. 0 means unlimited.
-Default value: 0 (unlimited).`,
-		},
-		{
-			Name: "MaxConcurrentUnseals",
-			Type: "int",
-
-			Comment: `The maximum amount of unseals that can be processed simultaneously
-from the storage subsystem. 0 means unlimited.
-Default value: 0 (unlimited).`,
-		},
-		{
-			Name: "MaxConcurrencyStorageCalls",
-			Type: "int",
-
-			Comment: `The maximum number of simultaneous inflight API calls to the storage
-subsystem.
-Default value: 100.`,
-		},
-		{
-			Name: "GCInterval",
-			Type: "Duration",
-
-			Comment: `The time between calls to periodic dagstore GC, in time.Duration string
-representation, e.g. 1m, 5m, 1h.
-Default value: 1 minute.`,
-		},
-	},
-	"DealmakingConfig": []DocField{
-		{
-			Name: "ConsiderOnlineStorageDeals",
-			Type: "bool",
-
-			Comment: `When enabled, the miner can accept online deals`,
-		},
-		{
-			Name: "ConsiderOfflineStorageDeals",
-			Type: "bool",
-
-			Comment: `When enabled, the miner can accept offline deals`,
-		},
-		{
-			Name: "ConsiderOnlineRetrievalDeals",
-			Type: "bool",
-
-			Comment: `When enabled, the miner can accept retrieval deals`,
-		},
-		{
-			Name: "ConsiderOfflineRetrievalDeals",
-			Type: "bool",
-
-			Comment: `When enabled, the miner can accept offline retrieval deals`,
-		},
-		{
-			Name: "ConsiderVerifiedStorageDeals",
-			Type: "bool",
-
-			Comment: `When enabled, the miner can accept verified deals`,
-		},
-		{
-			Name: "ConsiderUnverifiedStorageDeals",
-			Type: "bool",
-
-			Comment: `When enabled, the miner can accept unverified deals`,
-		},
-		{
-			Name: "PieceCidBlocklist",
-			Type: "[]cid.Cid",
-
-			Comment: `A list of Data CIDs to reject when making deals`,
-		},
-		{
-			Name: "ExpectedSealDuration",
-			Type: "Duration",
-
-			Comment: `Maximum expected amount of time getting the deal into a sealed sector will take
-This includes the time the deal will need to get transferred and published
-before being assigned to a sector`,
-		},
-		{
-			Name: "MaxDealStartDelay",
-			Type: "Duration",
-
-			Comment: `Maximum amount of time proposed deal StartEpoch can be in future`,
-		},
-		{
-			Name: "PublishMsgPeriod",
-			Type: "Duration",
-
-			Comment: `When a deal is ready to publish, the amount of time to wait for more
-deals to be ready to publish before publishing them all as a batch`,
-		},
-		{
-			Name: "MaxDealsPerPublishMsg",
-			Type: "uint64",
-
-			Comment: `The maximum number of deals to include in a single PublishStorageDeals
-message`,
-		},
-		{
-			Name: "MaxProviderCollateralMultiplier",
-			Type: "uint64",
-
-			Comment: `The maximum collateral that the provider will put up against a deal,
-as a multiplier of the minimum collateral bound`,
-		},
-		{
-			Name: "MaxStagingDealsBytes",
-			Type: "int64",
-
-			Comment: `The maximum allowed disk usage size in bytes of staging deals not yet
-passed to the sealing node by the markets service. 0 is unlimited.`,
-		},
-		{
-			Name: "SimultaneousTransfersForStorage",
-			Type: "uint64",
-
-			Comment: `The maximum number of parallel online data transfers for storage deals`,
-		},
-		{
-			Name: "SimultaneousTransfersForStoragePerClient",
-			Type: "uint64",
-
-			Comment: `The maximum number of simultaneous data transfers from any single client
-for storage deals.
-Unset by default (0), and values higher than SimultaneousTransfersForStorage
-will have no effect; i.e. the total number of simultaneous data transfers
-across all storage clients is bound by SimultaneousTransfersForStorage
-regardless of this number.`,
-		},
-		{
-			Name: "SimultaneousTransfersForRetrieval",
-			Type: "uint64",
-
-			Comment: `The maximum number of parallel online data transfers for retrieval deals`,
-		},
+	"DealmakingConfig": {
 		{
 			Name: "StartEpochSealingBuffer",
 			Type: "uint64",
 
 			Comment: `Minimum start epoch buffer to give time for sealing of sector with deal.`,
 		},
-		{
-			Name: "Filter",
-			Type: "string",
-
-			Comment: `A command used for fine-grained evaluation of storage deals
-see https://lotus.filecoin.io/storage-providers/advanced-configurations/market/#using-filters-for-fine-grained-storage-and-retrieval-deal-acceptance for more details`,
-		},
-		{
-			Name: "RetrievalFilter",
-			Type: "string",
-
-			Comment: `A command used for fine-grained evaluation of retrieval deals
-see https://lotus.filecoin.io/storage-providers/advanced-configurations/market/#using-filters-for-fine-grained-storage-and-retrieval-deal-acceptance for more details`,
-		},
-		{
-			Name: "RetrievalPricing",
-			Type: "*RetrievalPricing",
-
-			Comment: ``,
-		},
 	},
-	"Events": []DocField{
+	"EventsConfig": {
 		{
-			Name: "DisableRealTimeFilterAPI",
+			Name: "EnableActorEventsAPI",
 			Type: "bool",
 
-			Comment: `EnableEthRPC enables APIs that
-DisableRealTimeFilterAPI will disable the RealTimeFilterAPI that can create and query filters for actor events as they are emitted.
-The API is enabled when EnableEthRPC is true, but can be disabled selectively with this flag.`,
-		},
-		{
-			Name: "DisableHistoricFilterAPI",
-			Type: "bool",
-
-			Comment: `DisableHistoricFilterAPI will disable the HistoricFilterAPI that can create and query filters for actor events
-that occurred in the past. HistoricFilterAPI maintains a queryable index of events.
-The API is enabled when EnableEthRPC is true, but can be disabled selectively with this flag.`,
+			Comment: `EnableActorEventsAPI enables the Actor events API that enables clients to consume events
+emitted by (smart contracts + built-in Actors).
+Note: Setting this to true will also require that ChainIndexer is enabled, otherwise it will cause an error at startup.
+Set EnableIndexer in the ChainIndexer section of the config to true to enable the ChainIndexer.`,
 		},
 		{
 			Name: "FilterTTL",
 			Type: "Duration",
 
 			Comment: `FilterTTL specifies the time to live for actor event filters. Filters that haven't been accessed longer than
-this time become eligible for automatic deletion.`,
+this time become eligible for automatic deletion. Filters consume resources, so if they are unused they
+should not be retained.`,
 		},
 		{
 			Name: "MaxFilters",
 			Type: "int",
 
-			Comment: `MaxFilters specifies the maximum number of filters that may exist at any one time.`,
+			Comment: `MaxFilters specifies the maximum number of filters that may exist at any one time.
+Multi-tenant environments may want to increase this value to serve a larger number of clients. If using
+lotus-gateway, this global limit can be coupled with --eth-max-filters-per-conn which limits the number
+of filters per connection.`,
 		},
 		{
 			Name: "MaxFilterResults",
@@ -384,17 +215,8 @@ this time become eligible for automatic deletion.`,
 			Comment: `MaxFilterHeightRange specifies the maximum range of heights that can be used in a filter (to avoid querying
 the entire chain)`,
 		},
-		{
-			Name: "DatabasePath",
-			Type: "string",
-
-			Comment: `DatabasePath is the full path to a sqlite database that will be used to index actor events to
-support the historic filter APIs. If the database does not exist it will be created. The directory containing
-the database must already exist and be writeable. If a relative path is provided here, sqlite treats it as
-relative to the CWD (current working directory).`,
-		},
 	},
-	"FaultReporterConfig": []DocField{
+	"FaultReporterConfig": {
 		{
 			Name: "EnableConsensusFaultReporter",
 			Type: "bool",
@@ -423,7 +245,7 @@ ReportConsensusFault messages. It will pay for gas fees, and receive any
 rewards. This address should have adequate funds to cover gas fees.`,
 		},
 	},
-	"FeeConfig": []DocField{
+	"FeeConfig": {
 		{
 			Name: "DefaultMaxFee",
 			Type: "types.FIL",
@@ -431,32 +253,42 @@ rewards. This address should have adequate funds to cover gas fees.`,
 			Comment: ``,
 		},
 	},
-	"FevmConfig": []DocField{
+	"FevmConfig": {
 		{
 			Name: "EnableEthRPC",
 			Type: "bool",
 
-			Comment: `EnableEthRPC enables eth_ rpc, and enables storing a mapping of eth transaction hashes to filecoin message Cids.
-This will also enable the RealTimeFilterAPI and HistoricFilterAPI by default, but they can be disabled by config options above.`,
+			Comment: `EnableEthRPC enables eth_ RPC methods.
+Note: Setting this to true will also require that ChainIndexer is enabled, otherwise it will cause an error at startup.
+Set EnableIndexer in the ChainIndexer section of the config to true to enable the ChainIndexer.`,
 		},
 		{
-			Name: "EthTxHashMappingLifetimeDays",
+			Name: "EthTraceFilterMaxResults",
+			Type: "uint64",
+
+			Comment: `EthTraceFilterMaxResults sets the maximum results returned per request by trace_filter`,
+		},
+		{
+			Name: "EthBlkCacheSize",
 			Type: "int",
 
-			Comment: `EthTxHashMappingLifetimeDays the transaction hash lookup database will delete mappings that have been stored for more than x days
-Set to 0 to keep all mappings`,
+			Comment: `EthBlkCacheSize specifies the size of the cache used for caching Ethereum blocks.
+This cache enhances the performance of the eth_getBlockByHash RPC call by minimizing the need to access chain state for
+recently requested blocks that are already cached.
+The default size of the cache is 500 blocks.
+Note: Setting this value to 0 disables the cache.`,
 		},
+	},
+	"FullNode": {
 		{
-			Name: "Events",
-			Type: "Events",
+			Name: "Libp2p",
+			Type: "Libp2p",
 
 			Comment: ``,
 		},
-	},
-	"FullNode": []DocField{
 		{
-			Name: "Client",
-			Type: "Client",
+			Name: "Pubsub",
+			Type: "Pubsub",
 
 			Comment: ``,
 		},
@@ -479,20 +311,20 @@ Set to 0 to keep all mappings`,
 			Comment: ``,
 		},
 		{
-			Name: "Cluster",
-			Type: "UserRaftConfig",
-
-			Comment: ``,
-		},
-		{
 			Name: "Fevm",
 			Type: "FevmConfig",
 
 			Comment: ``,
 		},
 		{
-			Name: "Index",
-			Type: "IndexConfig",
+			Name: "Events",
+			Type: "EventsConfig",
+
+			Comment: ``,
+		},
+		{
+			Name: "ChainIndexer",
+			Type: "ChainIndexerConfig",
 
 			Comment: ``,
 		},
@@ -503,61 +335,48 @@ Set to 0 to keep all mappings`,
 			Comment: ``,
 		},
 	},
-	"IndexConfig": []DocField{
+	"HarmonyDB": {
 		{
-			Name: "EnableMsgIndex",
-			Type: "bool",
+			Name: "Hosts",
+			Type: "[]string",
 
-			Comment: `EXPERIMENTAL FEATURE. USE WITH CAUTION
-EnableMsgIndex enables indexing of messages on chain.`,
-		},
-	},
-	"IndexProviderConfig": []DocField{
-		{
-			Name: "Enable",
-			Type: "bool",
-
-			Comment: `Enable set whether to enable indexing announcement to the network and expose endpoints that
-allow indexer nodes to process announcements. Enabled by default.`,
+			Comment: `HOSTS is a list of hostnames to nodes running YugabyteDB
+in a cluster. Only 1 is required`,
 		},
 		{
-			Name: "EntriesCacheCapacity",
-			Type: "int",
-
-			Comment: `EntriesCacheCapacity sets the maximum capacity to use for caching the indexing advertisement
-entries. Defaults to 1024 if not specified. The cache is evicted using LRU policy. The
-maximum storage used by the cache is a factor of EntriesCacheCapacity, EntriesChunkSize and
-the length of multihashes being advertised. For example, advertising 128-bit long multihashes
-with the default EntriesCacheCapacity, and EntriesChunkSize means the cache size can grow to
-256MiB when full.`,
-		},
-		{
-			Name: "EntriesChunkSize",
-			Type: "int",
-
-			Comment: `EntriesChunkSize sets the maximum number of multihashes to include in a single entries chunk.
-Defaults to 16384 if not specified. Note that chunks are chained together for indexing
-advertisements that include more multihashes than the configured EntriesChunkSize.`,
-		},
-		{
-			Name: "TopicName",
+			Name: "Username",
 			Type: "string",
 
-			Comment: `TopicName sets the topic name on which the changes to the advertised content are announced.
-If not explicitly specified, the topic name is automatically inferred from the network name
-in following format: '/indexer/ingest/<network-name>'
-Defaults to empty, which implies the topic name is inferred from network name.`,
+			Comment: `The Yugabyte server's username with full credentials to operate on Lotus' Database. Blank for default.`,
 		},
 		{
-			Name: "PurgeCacheOnStart",
-			Type: "bool",
+			Name: "Password",
+			Type: "string",
 
-			Comment: `PurgeCacheOnStart sets whether to clear any cached entries chunks when the provider engine
-starts. By default, the cache is rehydrated from previously cached entries stored in
-datastore if any is present.`,
+			Comment: `The password for the related username. Blank for default.`,
+		},
+		{
+			Name: "Database",
+			Type: "string",
+
+			Comment: `The database (logical partition) within Yugabyte. Blank for default.`,
+		},
+		{
+			Name: "Port",
+			Type: "string",
+
+			Comment: `The port to find Yugabyte. Blank for default.`,
 		},
 	},
-	"Libp2p": []DocField{
+	"JournalConfig": {
+		{
+			Name: "DisabledEvents",
+			Type: "string",
+
+			Comment: `Events of the form: "system1:event1,system1:event2[,...]"`,
+		},
+	},
+	"Libp2p": {
 		{
 			Name: "ListenAddresses",
 			Type: "[]string",
@@ -624,7 +443,7 @@ count towards this limit.`,
 closed by the connection manager.`,
 		},
 	},
-	"Logging": []DocField{
+	"Logging": {
 		{
 			Name: "SubsystemLevels",
 			Type: "map[string]string",
@@ -632,7 +451,7 @@ closed by the connection manager.`,
 			Comment: `SubsystemLevels specify per-subsystem log levels`,
 		},
 	},
-	"MinerAddressConfig": []DocField{
+	"MinerAddressConfig": {
 		{
 			Name: "PreCommitControl",
 			Type: "[]string",
@@ -674,7 +493,7 @@ A control address that doesn't have enough funds will still be chosen
 over the worker address if this flag is set.`,
 		},
 	},
-	"MinerFeeConfig": []DocField{
+	"MinerFeeConfig": {
 		{
 			Name: "MaxPreCommitGasFee",
 			Type: "types.FIL",
@@ -723,8 +542,14 @@ over the worker address if this flag is set.`,
 
 			Comment: ``,
 		},
+		{
+			Name: "MaximizeWindowPoStFeeCap",
+			Type: "bool",
+
+			Comment: ``,
+		},
 	},
-	"MinerSubsystemConfig": []DocField{
+	"MinerSubsystemConfig": {
 		{
 			Name: "EnableMining",
 			Type: "bool",
@@ -744,10 +569,12 @@ over the worker address if this flag is set.`,
 			Comment: ``,
 		},
 		{
-			Name: "EnableMarkets",
+			Name: "EnableSectorIndexDB",
 			Type: "bool",
 
-			Comment: ``,
+			Comment: `When enabled, the sector index will reside in an external database
+as opposed to the local KV store in the miner process
+This is useful to allow workers to bypass the lotus miner to access sector information`,
 		},
 		{
 			Name: "SealerApiInfo",
@@ -761,8 +588,33 @@ over the worker address if this flag is set.`,
 
 			Comment: ``,
 		},
+		{
+			Name: "DisableWindowPoSt",
+			Type: "bool",
+
+			Comment: `When window post is enabled, the miner will automatically submit window post proofs
+for all sectors that are eligible for window post
+IF WINDOW POST IS DISABLED, THE MINER WILL NOT SUBMIT WINDOW POST PROOFS
+THIS WILL RESULT IN FAULTS AND PENALTIES IF NO OTHER MECHANISM IS RUNNING
+TO SUBMIT WINDOW POST PROOFS.
+Note: This option is entirely disabling the window post scheduler,
+not just the builtin PoSt computation like Proving.DisableBuiltinWindowPoSt.
+This option will stop lotus-miner from performing any actions related
+to window post, including scheduling, submitting proofs, and recovering
+sectors.`,
+		},
+		{
+			Name: "DisableWinningPoSt",
+			Type: "bool",
+
+			Comment: `When winning post is disabled, the miner process will NOT attempt to mine
+blocks. This should only be set when there's an external process mining
+blocks on behalf of the miner.
+When disabled and no external block producers are configured, all potential
+block rewards will be missed!`,
+		},
 	},
-	"ProvingConfig": []DocField{
+	"ProvingConfig": {
 		{
 			Name: "ParallelCheckLimit",
 			Type: "int",
@@ -853,13 +705,10 @@ After changing this option, confirm that the new value works in your setup by in
 			Name: "MaxPartitionsPerPoStMessage",
 			Type: "int",
 
-			Comment: `Maximum number of partitions to prove in a single SubmitWindowPoSt messace. 0 = network limit (10 in nv16)
+			Comment: `Maximum number of partitions to prove in a single SubmitWindowPoSt messace. 0 = network limit (3 in nv21)
 
 A single partition may contain up to 2349 32GiB sectors, or 2300 64GiB sectors.
-
-The maximum number of sectors which can be proven in a single PoSt message is 25000 in network version 16, which
-means that a single message can prove at most 10 partitions
-
+//
 Note that setting this value lower may result in less efficient gas use - more messages will be sent,
 to prove each deadline, resulting in more total gas use (but each message will have lower gas limit)
 
@@ -889,7 +738,7 @@ Note that setting this value lower may result in less efficient gas use - more m
 to prove each deadline, resulting in more total gas use (but each message will have lower gas limit)`,
 		},
 	},
-	"Pubsub": []DocField{
+	"Pubsub": {
 		{
 			Name: "Bootstrapper",
 			Type: "bool",
@@ -949,47 +798,7 @@ This property is used only if ElasticSearchTracer propery is set.`,
 			Comment: `Auth token that will be passed with logs to elasticsearch - used for weighted peers score.`,
 		},
 	},
-	"RetrievalPricing": []DocField{
-		{
-			Name: "Strategy",
-			Type: "string",
-
-			Comment: ``,
-		},
-		{
-			Name: "Default",
-			Type: "*RetrievalPricingDefault",
-
-			Comment: ``,
-		},
-		{
-			Name: "External",
-			Type: "*RetrievalPricingExternal",
-
-			Comment: ``,
-		},
-	},
-	"RetrievalPricingDefault": []DocField{
-		{
-			Name: "VerifiedDealsFreeTransfer",
-			Type: "bool",
-
-			Comment: `VerifiedDealsFreeTransfer configures zero fees for data transfer for a retrieval deal
-of a payloadCid that belongs to a verified storage deal.
-This parameter is ONLY applicable if the retrieval pricing policy strategy has been configured to "default".
-default value is true`,
-		},
-	},
-	"RetrievalPricingExternal": []DocField{
-		{
-			Name: "Path",
-			Type: "string",
-
-			Comment: `Path of the external script that will be run to price a retrieval deal.
-This parameter is ONLY applicable if the retrieval pricing policy strategy has been configured to "external".`,
-		},
-	},
-	"SealerConfig": []DocField{
+	"SealerConfig": {
 		{
 			Name: "ParallelFetchLimit",
 			Type: "int",
@@ -1090,7 +899,7 @@ to use when evaluating tasks against this worker. An empty value defaults
 to "hardware".`,
 		},
 	},
-	"SealingConfig": []DocField{
+	"SealingConfig": {
 		{
 			Name: "MaxWaitDealsSectors",
 			Type: "uint64",
@@ -1150,7 +959,7 @@ required to have expiration of at least the soonest-ending deal`,
 
 			Comment: `CommittedCapacitySectorLifetime is the duration a Committed Capacity (CC) sector will
 live before it must be extended or converted into sector containing deals before it is
-terminated. Value must be between 180-540 days inclusive`,
+terminated. Value must be between 180-1278 days (1278 in nv21, 540 before nv21).`,
 		},
 		{
 			Name: "WaitDealsDelay",
@@ -1295,14 +1104,44 @@ Submitting a smaller number of prove commits per epoch would reduce the possibil
 
 			Comment: ``,
 		},
+		{
+			Name: "UseSyntheticPoRep",
+			Type: "bool",
+
+			Comment: `UseSyntheticPoRep, when set to true, will reduce the amount of cache data held on disk after the completion of PreCommit 2 to 11GiB.`,
+		},
+		{
+			Name: "RequireActivationSuccess",
+			Type: "bool",
+
+			Comment: `Whether to abort if any sector activation in a batch fails (newly sealed sectors, only with ProveCommitSectors3).`,
+		},
+		{
+			Name: "RequireActivationSuccessUpdate",
+			Type: "bool",
+
+			Comment: `Whether to abort if any piece activation notification returns a non-zero exit code (newly sealed sectors, only with ProveCommitSectors3).`,
+		},
+		{
+			Name: "RequireNotificationSuccess",
+			Type: "bool",
+
+			Comment: `Whether to abort if any sector activation in a batch fails (updating sectors, only with ProveReplicaUpdates3).`,
+		},
+		{
+			Name: "RequireNotificationSuccessUpdate",
+			Type: "bool",
+
+			Comment: `Whether to abort if any piece activation notification returns a non-zero exit code (updating sectors, only with ProveReplicaUpdates3).`,
+		},
 	},
-	"Splitstore": []DocField{
+	"Splitstore": {
 		{
 			Name: "ColdStoreType",
 			Type: "string",
 
 			Comment: `ColdStoreType specifies the type of the coldstore.
-It can be "messages" (default) to store only messages, "universal" to store all chain state or "discard" for discarding cold blocks.`,
+It can be "discard" (default) for discarding cold blocks, "messages" to store only messages or "universal" to store all chain state..`,
 		},
 		{
 			Name: "HotStoreType",
@@ -1363,7 +1202,7 @@ is set.  Moving GC will not occur when total moving size exceeds
 HotstoreMaxSpaceTarget - HotstoreMaxSpaceSafetyBuffer`,
 		},
 	},
-	"StorageMiner": []DocField{
+	"StorageMiner": {
 		{
 			Name: "Subsystems",
 			Type: "MinerSubsystemConfig",
@@ -1373,12 +1212,6 @@ HotstoreMaxSpaceTarget - HotstoreMaxSpaceSafetyBuffer`,
 		{
 			Name: "Dealmaking",
 			Type: "DealmakingConfig",
-
-			Comment: ``,
-		},
-		{
-			Name: "IndexProvider",
-			Type: "IndexProviderConfig",
 
 			Comment: ``,
 		},
@@ -1413,75 +1246,13 @@ HotstoreMaxSpaceTarget - HotstoreMaxSpaceSafetyBuffer`,
 			Comment: ``,
 		},
 		{
-			Name: "DAGStore",
-			Type: "DAGStoreConfig",
+			Name: "HarmonyDB",
+			Type: "HarmonyDB",
 
 			Comment: ``,
 		},
 	},
-	"UserRaftConfig": []DocField{
-		{
-			Name: "ClusterModeEnabled",
-			Type: "bool",
-
-			Comment: `EXPERIMENTAL. config to enabled node cluster with raft consensus`,
-		},
-		{
-			Name: "DataFolder",
-			Type: "string",
-
-			Comment: `A folder to store Raft's data.`,
-		},
-		{
-			Name: "InitPeersetMultiAddr",
-			Type: "[]string",
-
-			Comment: `InitPeersetMultiAddr provides the list of initial cluster peers for new Raft
-peers (with no prior state). It is ignored when Raft was already
-initialized or when starting in staging mode.`,
-		},
-		{
-			Name: "WaitForLeaderTimeout",
-			Type: "Duration",
-
-			Comment: `LeaderTimeout specifies how long to wait for a leader before
-failing an operation.`,
-		},
-		{
-			Name: "NetworkTimeout",
-			Type: "Duration",
-
-			Comment: `NetworkTimeout specifies how long before a Raft network
-operation is timed out`,
-		},
-		{
-			Name: "CommitRetries",
-			Type: "int",
-
-			Comment: `CommitRetries specifies how many times we retry a failed commit until
-we give up.`,
-		},
-		{
-			Name: "CommitRetryDelay",
-			Type: "Duration",
-
-			Comment: `How long to wait between retries`,
-		},
-		{
-			Name: "BackupsRotate",
-			Type: "int",
-
-			Comment: `BackupsRotate specifies the maximum number of Raft's DataFolder
-copies that we keep as backups (renaming) after cleanup.`,
-		},
-		{
-			Name: "Tracing",
-			Type: "bool",
-
-			Comment: `Tracing enables propagation of contexts across binary boundaries.`,
-		},
-	},
-	"Wallet": []DocField{
+	"Wallet": {
 		{
 			Name: "RemoteBackend",
 			Type: "string",

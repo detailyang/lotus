@@ -31,18 +31,18 @@ func (t *CarbNode) MarshalCBOR(w io.Writer) error {
 	}
 
 	// t.Sub ([]cid.Cid) (slice)
-	if len("Sub") > cbg.MaxLength {
+	if len("Sub") > 8192 {
 		return xerrors.Errorf("Value in field \"Sub\" was too long")
 	}
 
 	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len("Sub"))); err != nil {
 		return err
 	}
-	if _, err := io.WriteString(w, string("Sub")); err != nil {
+	if _, err := cw.WriteString(string("Sub")); err != nil {
 		return err
 	}
 
-	if len(t.Sub) > cbg.MaxLength {
+	if len(t.Sub) > 8192 {
 		return xerrors.Errorf("Slice value in field t.Sub was too long")
 	}
 
@@ -50,9 +50,11 @@ func (t *CarbNode) MarshalCBOR(w io.Writer) error {
 		return err
 	}
 	for _, v := range t.Sub {
-		if err := cbg.WriteCid(w, v); err != nil {
-			return xerrors.Errorf("failed writing cid field t.Sub: %w", err)
+
+		if err := cbg.WriteCid(cw, v); err != nil {
+			return xerrors.Errorf("failed to write cid field v: %w", err)
 		}
+
 	}
 	return nil
 }
@@ -86,7 +88,7 @@ func (t *CarbNode) UnmarshalCBOR(r io.Reader) (err error) {
 	for i := uint64(0); i < n; i++ {
 
 		{
-			sval, err := cbg.ReadString(cr)
+			sval, err := cbg.ReadStringWithMax(cr, 8192)
 			if err != nil {
 				return err
 			}
@@ -103,7 +105,7 @@ func (t *CarbNode) UnmarshalCBOR(r io.Reader) (err error) {
 				return err
 			}
 
-			if extra > cbg.MaxLength {
+			if extra > 8192 {
 				return fmt.Errorf("t.Sub: array too large (%d)", extra)
 			}
 
@@ -116,12 +118,181 @@ func (t *CarbNode) UnmarshalCBOR(r io.Reader) (err error) {
 			}
 
 			for i := 0; i < int(extra); i++ {
+				{
+					var maj byte
+					var extra uint64
+					var err error
+					_ = maj
+					_ = extra
+					_ = err
 
-				c, err := cbg.ReadCid(cr)
-				if err != nil {
-					return xerrors.Errorf("reading cid field t.Sub failed: %w", err)
+					{
+
+						c, err := cbg.ReadCid(cr)
+						if err != nil {
+							return xerrors.Errorf("failed to read cid field t.Sub[i]: %w", err)
+						}
+
+						t.Sub[i] = c
+
+					}
+
 				}
-				t.Sub[i] = c
+			}
+
+		default:
+			// Field doesn't exist on this type, so ignore it
+			cbg.ScanForLinks(r, func(cid.Cid) {})
+		}
+	}
+
+	return nil
+}
+func (t *DatastoreEntry) MarshalCBOR(w io.Writer) error {
+	if t == nil {
+		_, err := w.Write(cbg.CborNull)
+		return err
+	}
+
+	cw := cbg.NewCborWriter(w)
+
+	if _, err := cw.Write([]byte{162}); err != nil {
+		return err
+	}
+
+	// t.Key ([]uint8) (slice)
+	if len("Key") > 8192 {
+		return xerrors.Errorf("Value in field \"Key\" was too long")
+	}
+
+	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len("Key"))); err != nil {
+		return err
+	}
+	if _, err := cw.WriteString(string("Key")); err != nil {
+		return err
+	}
+
+	if len(t.Key) > 2097152 {
+		return xerrors.Errorf("Byte array in field t.Key was too long")
+	}
+
+	if err := cw.WriteMajorTypeHeader(cbg.MajByteString, uint64(len(t.Key))); err != nil {
+		return err
+	}
+
+	if _, err := cw.Write(t.Key); err != nil {
+		return err
+	}
+
+	// t.Value ([]uint8) (slice)
+	if len("Value") > 8192 {
+		return xerrors.Errorf("Value in field \"Value\" was too long")
+	}
+
+	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len("Value"))); err != nil {
+		return err
+	}
+	if _, err := cw.WriteString(string("Value")); err != nil {
+		return err
+	}
+
+	if len(t.Value) > 2097152 {
+		return xerrors.Errorf("Byte array in field t.Value was too long")
+	}
+
+	if err := cw.WriteMajorTypeHeader(cbg.MajByteString, uint64(len(t.Value))); err != nil {
+		return err
+	}
+
+	if _, err := cw.Write(t.Value); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (t *DatastoreEntry) UnmarshalCBOR(r io.Reader) (err error) {
+	*t = DatastoreEntry{}
+
+	cr := cbg.NewCborReader(r)
+
+	maj, extra, err := cr.ReadHeader()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
+	}()
+
+	if maj != cbg.MajMap {
+		return fmt.Errorf("cbor input should be of type map")
+	}
+
+	if extra > cbg.MaxLength {
+		return fmt.Errorf("DatastoreEntry: map struct too large (%d)", extra)
+	}
+
+	var name string
+	n := extra
+
+	for i := uint64(0); i < n; i++ {
+
+		{
+			sval, err := cbg.ReadStringWithMax(cr, 8192)
+			if err != nil {
+				return err
+			}
+
+			name = string(sval)
+		}
+
+		switch name {
+		// t.Key ([]uint8) (slice)
+		case "Key":
+
+			maj, extra, err = cr.ReadHeader()
+			if err != nil {
+				return err
+			}
+
+			if extra > 2097152 {
+				return fmt.Errorf("t.Key: byte array too large (%d)", extra)
+			}
+			if maj != cbg.MajByteString {
+				return fmt.Errorf("expected byte array")
+			}
+
+			if extra > 0 {
+				t.Key = make([]uint8, extra)
+			}
+
+			if _, err := io.ReadFull(cr, t.Key); err != nil {
+				return err
+			}
+
+			// t.Value ([]uint8) (slice)
+		case "Value":
+
+			maj, extra, err = cr.ReadHeader()
+			if err != nil {
+				return err
+			}
+
+			if extra > 2097152 {
+				return fmt.Errorf("t.Value: byte array too large (%d)", extra)
+			}
+			if maj != cbg.MajByteString {
+				return fmt.Errorf("expected byte array")
+			}
+
+			if extra > 0 {
+				t.Value = make([]uint8, extra)
+			}
+
+			if _, err := io.ReadFull(cr, t.Value); err != nil {
+				return err
 			}
 
 		default:
